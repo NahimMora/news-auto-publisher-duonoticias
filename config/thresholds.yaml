@@ -1,0 +1,49 @@
+publish_threshold: 62
+video_threshold: 58
+carousel_threshold: 60
+breaking_news_threshold: 88
+manual_review_threshold: 52
+reject_threshold: 40
+
+source_thresholds:
+  eltribuno:
+    publish_threshold: 56
+    manual_review_threshold: 48
+  nuevodiariodesalta:
+    publish_threshold: 56
+    manual_review_threshold: 48
+  fiscalespenalesalta:
+    publish_threshold: 56
+    manual_review_threshold: 48
+  justiciasalta:
+    publish_threshold: 56
+    manual_review_threshold: 48
+  paparazzi:
+    publish_threshold: 64
+    manual_review_threshold: 54
+  tn:
+    publish_threshold: 62
+    manual_review_threshold: 52
+  x:
+    publish_threshold: 58
+    manual_review_threshold: 50
+
+quotas:
+  videos_per_slot: 5
+  posts_per_slot: 10
+  publish_slot_window_minutes: 45
+  publish_max_content_age_hours: 24
+  publish_require_same_local_day: true
+  max_posts_per_day: 5
+  max_reels_per_day: 3
+  max_carousels_per_day: 3
+  max_x_reels_per_day: 3
+  max_political_posts_per_day: 2
+  min_local_news_per_day: 3
+
+scheduler_slots:
+  - "09:00"
+  - "12:00"
+  - "15:00"
+  - "18:00"
+  - "21:00"

@@ -1,0 +1,154 @@
+sources:
+  # --- ESPECTACULOS ---
+  - name: paparazzi
+    enabled: true
+    type: entertainment
+    scan_interval_minutes: 60
+    priority: 88
+    category: espectaculos
+    base_url: https://www.paparazzi.com.ar
+    parser: wordpress
+    max_items_per_scan: 12
+
+  # --- NACIONAL ---
+  - name: tn
+    enabled: true
+    type: news
+    scan_interval_minutes: 45
+    priority: 76
+    category: nacional
+    base_url: https://tn.com.ar
+    parser: rss_html
+    max_items_per_scan: 12
+
+  - name: infobae
+    enabled: true
+    type: news
+    scan_interval_minutes: 45
+    priority: 74
+    category: nacional
+    base_url: https://www.infobae.com
+    parser: rss_html
+    max_items_per_scan: 12
+
+  - name: noticiasargentinas
+    enabled: true
+    type: news
+    scan_interval_minutes: 45
+    priority: 72
+    category: nacional
+    base_url: https://www.noticiasargentinas.com
+    parser: rss_html
+    max_items_per_scan: 10
+
+  - name: minutouno
+    enabled: true
+    type: news
+    scan_interval_minutes: 60
+    priority: 72
+    category: nacional
+    base_url: https://www.minutouno.com
+    parser: rss_html
+    max_items_per_scan: 10
+
+  - name: elonce
+    enabled: true
+    type: news
+    scan_interval_minutes: 60
+    priority: 68
+    category: nacional
+    base_url: https://www.elonce.com
+    parser: rss_html
+    max_items_per_scan: 8
+
+  - name: ambitofinanciero
+    enabled: true
+    type: news
+    scan_interval_minutes: 60
+    priority: 65
+    category: economia
+    base_url: https://www.ambito.com
+    parser: rss_html
+    max_items_per_scan: 8
+
+  # --- SALTA LOCAL ---
+  - name: eltribuno
+    enabled: true
+    type: local_news
+    scan_interval_minutes: 40
+    priority: 98
+    category: salta
+    base_url: https://www.eltribuno.com
+    parser: html_scraper
+    max_items_per_scan: 12
+
+  - name: nuevodiariodesalta
+    enabled: true
+    type: local_news
+    scan_interval_minutes: 40
+    priority: 96
+    category: salta
+    base_url: https://nuevodiariodesalta.com.ar
+    parser: html_scraper
+    max_items_per_scan: 10
+
+  # --- SALTA POLICIAL / JUDICIAL ---
+  - name: fiscalespenalesalta
+    enabled: true
+    type: local_news
+    scan_interval_minutes: 60
+    priority: 94
+    category: policial_salta
+    base_url: https://www.fiscalespenalesalta.gob.ar
+    parser: html_scraper
+    max_items_per_scan: 8
+
+  - name: justiciasalta
+    enabled: true
+    type: local_news
+    scan_interval_minutes: 60
+    priority: 92
+    category: policial_salta
+    base_url: https://www.justiciasalta.gov.ar
+    parser: html_scraper
+    max_items_per_scan: 8
+
+  # --- DESHABILITADOS ---
+  - name: ariesonline
+    enabled: false
+    type: local_news
+    scan_interval_minutes: 45
+    priority: 78
+    category: salta
+    base_url: https://ariesonline.com.ar
+    parser: html_scraper
+    max_items_per_scan: 8
+    note: "Bloqueado por Cloudflare 403 - requiere browser automation para activar"
+
+  - name: eloncesalta
+    enabled: false
+    type: local_news
+    scan_interval_minutes: 45
+    priority: 76
+    category: salta
+    base_url: https://eloncesalta.com.ar
+    parser: html_scraper
+    max_items_per_scan: 8
+    note: "Dominio DNS caido - verificar si el sitio sigue activo"
+
+  # --- X / VIRAL ---
+  - name: x
+    enabled: true
+    type: x_video
+    scan_interval_minutes: 90
+    priority: 85
+    category: viral
+    base_url: https://x.com
+    parser: manual_first
+    max_items_per_scan: 8
+    handles:
+      - https://x.com/TTendenciaX
+      - https://x.com/home?lang=es
+      - https://x.com/BoludoscnAmarok
+      - https://x.com/ceciarmy
+      - https://x.com/therealbuni

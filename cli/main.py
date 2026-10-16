@@ -1,0 +1,869 @@
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import os
+import shutil
+import socket
+import sys
+import time
+from contextlib import contextmanager
+from datetime import date, datetime, timezone
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
+from typing import Any, List
+from zoneinfo import ZoneInfo
+
+from jobs.pipeline import DuoPipeline
+from storage.settings import get_settings
+from utils import media_storage
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="AutoPublicador Duo 24/7 CLI")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    _add_run_once(subparsers.add_parser("run-once", help="Run one pipeline cycle"))
+    _add_run_once(subparsers.add_parser("dry-run", help="Run one dry-run cycle"))
+    run_247 = subparsers.add_parser("run-24-7", help="Run loop with watchdog-style error isolation")
+    run_247.add_argument("--interval-minutes", type=float, default=float(os.getenv("DUO_LOOP_MINUTES", "60")))
+    run_247.add_argument("--max-news", type=int, default=None)
+    run_247.add_argument("--max-posts", type=int, default=None)
+    run_247.add_argument("--live", action="store_true")
+    run_247.add_argument("--cycles", type=int, default=0, help="Optional finite cycle count for smoke tests")
+
+    scan_sources = subparsers.add_parser("scan-sources", help="Scan enabled news sources")
+    scan_sources.add_argument("--max", dest="max_items", type=int, default=None)
+    scan_source = subparsers.add_parser("scan-source", help="Scan one source")
+    scan_source.add_argument("--source", required=True)
+    scan_source.add_argument("--max", dest="max_items", type=int, default=None)
+    scan_x = subparsers.add_parser("scan-x-feed", help="Scan configured X feeds when X_MODE is browser/api")
+    scan_x.add_argument("--max", dest="max_items", type=int, default=None)
+
+    import_x = subparsers.add_parser("import-x-url", help="Import one X URL in manual mode")
+    import_x.add_argument("--url", required=True)
+    import_x.add_argument("--dry-run", action="store_true")
+
+    subparsers.add_parser("score-pending", help="Score pending items")
+    subparsers.add_parser("editorial-pending", help="Generate editorial JSON for scored items")
+    subparsers.add_parser("format-pending", help="Format editorialized items")
+    subparsers.add_parser("schedule-pending", help="Schedule formatted items")
+
+    publish = subparsers.add_parser("publish-pending", help="Publish due items or preview safely")
+    publish.add_argument("--max-posts", type=int, default=None)
+    publish.add_argument("--live", action="store_true")
+    publish.add_argument("--content-type", choices=("reels", "news", "all"), default="all",
+                         help="reels=X clips only, news=image/carousel only, all=unified queue")
+    publish.add_argument("--force-due", action="store_true",
+                         help="Ignore scheduled time and publish immediately")
+    publish_now = subparsers.add_parser("publish-now", help="Publish or preview one formatted item by content key")
+    publish_now.add_argument("--content-key", required=True)
+    publish_now.add_argument("--platform", choices=("instagram", "facebook", "both"), default="both")
+    publish_now.add_argument("--live", action="store_true")
+    publish_now.add_argument("--force", action="store_true")
+
+    subparsers.add_parser("analytics-collect", help="Collect analytics checkpoints")
+    growth_report = subparsers.add_parser("growth-report", help="Build growth feedback report")
+    growth_report.add_argument("--date", dest="report_date", default=None)
+    growth_report.add_argument("--no-write", action="store_true")
+    source_ranking = subparsers.add_parser("source-ranking", help="Show X/source ranking")
+    source_ranking.add_argument("--lookback-days", type=int, default=None)
+
+    queue = subparsers.add_parser("queue", help="Show queue")
+    queue.add_argument("--format", choices=("json", "table"), default="json")
+    queue.add_argument("--limit", type=int, default=50)
+    inspect_cmd = subparsers.add_parser("inspect", help="Inspect one content item")
+    inspect_cmd.add_argument("--content-key", required=True)
+    retry_cmd = subparsers.add_parser("retry", help="Retry one content item")
+    retry_cmd.add_argument("--content-key", required=True)
+    skip_cmd = subparsers.add_parser("skip", help="Skip one content item")
+    skip_cmd.add_argument("--content-key", required=True)
+    skip_cmd.add_argument("--reason", required=True)
+
+    subparsers.add_parser("safe-mode", help="Preview due publications without live publish")
+    subparsers.add_parser("test-meta", help="Check Meta credentials without publishing")
+    test_source = subparsers.add_parser("test-source", help="Scan a source with max=1")
+    test_source.add_argument("--source", required=True)
+    subparsers.add_parser("autorun-health", help="Check 24/7 autorun health")
+    subparsers.add_parser("doctor", help="Check runtime configuration")
+    subparsers.add_parser("status", help="Show status summary")
+
+    _add_legacy_aliases(subparsers)
+    return parser
+
+
+def _add_run_once(cmd: argparse.ArgumentParser) -> None:
+    cmd.add_argument("--max-news", type=int, default=None)
+    cmd.add_argument("--max-posts", type=int, default=None)
+    cmd.add_argument("--dry-run", action="store_true")
+    cmd.add_argument("--safe-mode", action="store_true")
+
+
+def _add_legacy_aliases(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    legacy_pipeline = subparsers.add_parser("run-pipeline", help=argparse.SUPPRESS)
+    _add_run_once(legacy_pipeline)
+    legacy_scraper = subparsers.add_parser("run-scraper", help=argparse.SUPPRESS)
+    legacy_scraper.add_argument("--max-news", type=int, default=None)
+    legacy_scraper.add_argument("--x-handles", nargs="*", default=None)
+    legacy_publisher = subparsers.add_parser("run-publisher", help=argparse.SUPPRESS)
+    legacy_publisher.add_argument("--live", action="store_true")
+    legacy_publisher.add_argument("--dry-run", action="store_true")
+    legacy_publisher.add_argument("--max-posts", type=int, default=None)
+    legacy_publisher.add_argument("--safe-mode", action="store_true")
+    subparsers.add_parser("run-analytics", help=argparse.SUPPRESS)
+    subparsers.add_parser("show-stats", help=argparse.SUPPRESS)
+    subparsers.add_parser("show-queue", help=argparse.SUPPRESS)
+    subparsers.add_parser("retry-failed", help=argparse.SUPPRESS)
+    subparsers.add_parser("requeue-pending", help=argparse.SUPPRESS)
+    validation = subparsers.add_parser("validate-scoring", help=argparse.SUPPRESS)
+    validation.add_argument("--lookback-days", type=int, default=30)
+    validation.add_argument("--checkpoint", default="T3")
+    ranking = subparsers.add_parser("show-source-ranking", help=argparse.SUPPRESS)
+    ranking.add_argument("--lookback-days", type=int, default=None)
+    report = subparsers.add_parser("daily-report", help=argparse.SUPPRESS)
+    report.add_argument("--date", dest="report_date", default=None)
+    report.add_argument("--no-write", action="store_true")
+
+
+def main(argv: List[str] | None = None) -> None:
+    _configure_console_encoding()
+    logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s %(name)s: %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    args = build_parser().parse_args(argv)
+    pipeline = DuoPipeline()
+    settings = pipeline.settings
+    command = args.command
+
+    if command in {"run-once", "dry-run", "run-pipeline"}:
+        dry_run = command == "dry-run" or bool(getattr(args, "dry_run", False))
+        safe_mode = bool(getattr(args, "safe_mode", False)) or settings.safe_mode_default
+        result = pipeline.run_pipeline(
+            max_news=getattr(args, "max_news", None),
+            dry_run=dry_run or safe_mode,
+            max_posts=getattr(args, "max_posts", None),
+            safe_mode=safe_mode,
+        )
+        _print_json(result)
+        return
+    if command == "run-24-7":
+        _run_247(pipeline, args)
+        return
+    if command in {"scan-sources", "run-scraper"}:
+        count = pipeline.run_scraper(
+            max_news=getattr(args, "max_items", None) or getattr(args, "max_news", None),
+            x_handles=getattr(args, "x_handles", None) or None,
+        )
+        _print_json({"ingested": count})
+        return
+    if command in {"scan-source", "test-source"}:
+        count = pipeline.scan_source(args.source, max_items=getattr(args, "max_items", None) or 1)
+        _print_json({"source": args.source, "ingested": count})
+        return
+    if command == "scan-x-feed":
+        if settings.x_mode == "manual":
+            _print_json({"scanned": 0, "mode": "manual", "reason": "Use import-x-url in X_MODE=manual"})
+            return
+        rows = pipeline.x_extractor.extract(limit_per_handle=args.max_items or 5)
+        _print_json({"ingested": pipeline._ingest_rows(rows), "mode": settings.x_mode})
+        return
+    if command == "import-x-url":
+        key = pipeline.import_x_url(args.url, dry_run=args.dry_run)
+        _print_json({"content_key": key, "url": args.url, "dry_run": args.dry_run})
+        return
+    if command == "score-pending":
+        _print_json({"scored": pipeline.run_scoring()})
+        return
+    if command == "editorial-pending":
+        _print_json({"editorialized": pipeline.run_editorial()})
+        return
+    if command == "format-pending":
+        _print_json({"formatted": pipeline.run_formatter()})
+        return
+    if command == "schedule-pending":
+        _print_json({"scheduled": pipeline.run_scheduler()})
+        return
+    if command in {"publish-pending", "run-publisher"}:
+        live = bool(getattr(args, "live", False)) and settings.live_publish_enabled
+        content_type = getattr(args, "content_type", "all") or "all"
+        ct = None if content_type == "all" else content_type
+        if not live or bool(getattr(args, "dry_run", False)) or bool(getattr(args, "safe_mode", False)):
+            preview = pipeline.preview_publications(max_posts=getattr(args, "max_posts", None), safe_mode=True)
+            _print_json({"live": False, "blocked_reason": "safe_preview", "content_type": content_type, "preview": preview, "count": len(preview)})
+            return
+        force_due = bool(getattr(args, "force_due", False))
+        published = pipeline.run_publisher(max_posts=args.max_posts, safe_mode=False, content_type=ct, force_due=force_due)
+        analytics = pipeline.run_analytics() if published > 0 else 0
+        _print_json({"live": True, "content_type": content_type, "published": published, "analytics_collected": analytics})
+        return
+    if command == "publish-now":
+        live = bool(getattr(args, "live", False)) and settings.live_publish_enabled
+        _print_json(pipeline.publish_now(args.content_key, live=live, platform=args.platform, force=args.force))
+        return
+    if command in {"analytics-collect", "run-analytics"}:
+        _print_json({"analytics": pipeline.run_analytics()})
+        return
+    if command in {"growth-report", "daily-report"}:
+        parsed_date = date.fromisoformat(args.report_date) if getattr(args, "report_date", None) else None
+        _print_json(pipeline.build_daily_report(report_date=parsed_date, write_json=not getattr(args, "no_write", False)))
+        return
+    if command in {"source-ranking", "show-source-ranking"}:
+        _print_json(pipeline.show_source_ranking(lookback_days=args.lookback_days))
+        return
+    if command in {"queue", "show-queue"}:
+        rows = pipeline.queue_rows(limit=getattr(args, "limit", 50))
+        if getattr(args, "format", "json") == "table":
+            print(_format_table(rows))
+        else:
+            _print_json(rows)
+        return
+    if command == "inspect":
+        _print_json(pipeline.inspect(args.content_key) or {"error": "not_found", "content_key": args.content_key})
+        return
+    if command == "retry":
+        _print_json({"content_key": args.content_key, "retried": pipeline.retry(args.content_key)})
+        return
+    if command == "skip":
+        _print_json({"content_key": args.content_key, "skipped": pipeline.skip(args.content_key, args.reason)})
+        return
+    if command == "safe-mode":
+        preview = pipeline.preview_publications(max_posts=settings.publish_default_max_posts, safe_mode=True)
+        _print_json({"safe_mode": True, "preview": preview, "count": len(preview)})
+        return
+    if command == "test-meta":
+        _print_json(_test_meta(pipeline))
+        return
+    if command == "autorun-health":
+        _print_json(_autorun_health(pipeline))
+        return
+    if command in {"doctor", "status"}:
+        payload = _doctor(pipeline) if command == "doctor" else pipeline.show_stats()
+        _print_json(payload)
+        return
+    if command == "validate-scoring":
+        _print_json(pipeline.validate_scoring(lookback_days=args.lookback_days, checkpoint_label=args.checkpoint))
+        return
+    if command == "retry-failed":
+        _print_json({"reset": pipeline.retry_failed()})
+        return
+    if command == "requeue-pending":
+        _print_json({"requeued": pipeline.requeue_pending_for_rebuild()})
+        return
+    if command == "show-stats":
+        _print_json(pipeline.show_stats())
+        return
+
+
+def _run_247(pipeline: DuoPipeline, args: argparse.Namespace) -> None:
+    interval = max(1.0, float(args.interval_minutes)) * 60
+    safe_mode = not bool(args.live)
+    align_to_slots = bool(args.live)
+    logger = logging.getLogger("duo.autorun")
+    _configure_runtime_file_logging(pipeline.settings)
+    with _runtime_lock(pipeline.settings) as acquired:
+        if not acquired:
+            message = "autorun ya esta ejecutandose; se omite esta instancia"
+            logger.warning(message)
+            print(message)
+            return
+        _run_247_locked(pipeline, args, interval=interval, safe_mode=safe_mode, align_to_slots=align_to_slots)
+
+
+def _run_247_locked(
+    pipeline: DuoPipeline,
+    args: argparse.Namespace,
+    *,
+    interval: float,
+    safe_mode: bool,
+    align_to_slots: bool,
+) -> None:
+    logger = logging.getLogger("duo.autorun")
+    try:
+        cycles = 0
+        initial_sleep = _seconds_until_initial_cycle(
+            pipeline,
+            interval,
+            align_to_slots=align_to_slots,
+        )
+        if initial_sleep > 0:
+            _log_and_print(logger, f"esperando {int(initial_sleep)} segundos hasta el proximo bloque")
+            _write_runtime_heartbeat(
+                pipeline,
+                {
+                    "state": "waiting",
+                    "safe_mode": safe_mode,
+                    "live": not safe_mode,
+                    "next_sleep_seconds": int(initial_sleep),
+                    "next_slot_seconds": int(initial_sleep),
+                    "last_error": "",
+                },
+            )
+            time.sleep(initial_sleep)
+        while True:
+            cycles += 1
+            started_dt = datetime.now(timezone.utc).replace(microsecond=0)
+            started = started_dt.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+            result: dict[str, Any] = {}
+            last_error = ""
+            _log_and_print(logger, f"[{started}] ciclo iniciado safe_mode={safe_mode}")
+            _write_runtime_heartbeat(
+                pipeline,
+                {
+                    "state": "running",
+                    "cycle": cycles,
+                    "started_at": started_dt.isoformat(),
+                    "safe_mode": safe_mode,
+                    "live": not safe_mode,
+                    "last_error": "",
+                },
+            )
+            try:
+                result = pipeline.run_pipeline(
+                    max_news=args.max_news,
+                    dry_run=safe_mode,
+                    max_posts=args.max_posts,
+                    safe_mode=safe_mode,
+                    fixed_slot_publish=True,
+                )
+                payload = json.dumps(result, ensure_ascii=False)
+                _log_and_print(logger, payload)
+            except Exception as exc:
+                last_error = str(exc)
+                logger.exception("cycle failed: %s", exc)
+                result = {"error": last_error}
+            if args.cycles and cycles >= args.cycles:
+                _write_runtime_heartbeat(
+                    pipeline,
+                    _heartbeat_payload(
+                        cycle=cycles,
+                        started_at=started_dt,
+                        result=result,
+                        safe_mode=safe_mode,
+                        last_error=last_error,
+                        next_sleep_seconds=0,
+                    ),
+                )
+                _log_and_print(logger, "ciclos solicitados completados")
+                break
+            sleep_seconds = _seconds_until_next_cycle(
+                pipeline,
+                interval,
+                align_to_slots=align_to_slots,
+            )
+            _write_runtime_heartbeat(
+                pipeline,
+                _heartbeat_payload(
+                    cycle=cycles,
+                    started_at=started_dt,
+                    result=result,
+                    safe_mode=safe_mode,
+                    last_error=last_error,
+                    next_sleep_seconds=int(sleep_seconds),
+                ),
+            )
+            _log_and_print(logger, f"durmiendo {int(sleep_seconds)} segundos")
+            time.sleep(sleep_seconds)
+    except KeyboardInterrupt:
+        _write_runtime_heartbeat(
+            pipeline,
+            {
+                "state": "stopped",
+                "safe_mode": safe_mode,
+                "live": not safe_mode,
+                "last_error": "KeyboardInterrupt",
+            },
+        )
+        _log_and_print(logger, "CTRL+C recibido. Cierre limpio.")
+
+
+def _seconds_until_initial_cycle(
+    pipeline: DuoPipeline,
+    interval: float,
+    *,
+    align_to_slots: bool,
+) -> float:
+    if not align_to_slots:
+        return 0.0
+    if pipeline._active_schedule_slot():
+        return 0.0
+    slot_sleep = _seconds_until_next_slot(
+        schedule_slots=pipeline.settings.schedule_slots,
+        timezone_name=pipeline.settings.timezone,
+    )
+    if slot_sleep is None:
+        return interval
+    return max(1.0, slot_sleep)
+
+
+def _seconds_until_next_cycle(
+    pipeline: DuoPipeline,
+    interval: float,
+    *,
+    align_to_slots: bool = False,
+) -> float:
+    slot_sleep = _seconds_until_next_slot(
+        schedule_slots=pipeline.settings.schedule_slots,
+        timezone_name=pipeline.settings.timezone,
+    )
+    if slot_sleep is None:
+        return interval
+    if align_to_slots:
+        return max(1.0, slot_sleep)
+    return max(1.0, min(interval, slot_sleep))
+
+
+def _seconds_until_next_slot(*, schedule_slots: tuple[str, ...], timezone_name: str) -> float | None:
+    if not schedule_slots:
+        return None
+    try:
+        zone = ZoneInfo(timezone_name)
+    except Exception:
+        return None
+    now = datetime.now(zone).replace(microsecond=0)
+    candidates = []
+    for day_offset in (0, 1):
+        day = now.date()
+        if day_offset:
+            day = day.fromordinal(day.toordinal() + day_offset)
+        for slot in schedule_slots:
+            try:
+                hour, minute = (int(part) for part in str(slot).split(":", 1))
+            except Exception:
+                continue
+            candidate = datetime(
+                year=day.year,
+                month=day.month,
+                day=day.day,
+                hour=hour,
+                minute=minute,
+                tzinfo=zone,
+            )
+            if candidate > now:
+                candidates.append(candidate)
+    if not candidates:
+        return None
+    return (min(candidates) - now).total_seconds()
+
+
+def _doctor(pipeline: DuoPipeline) -> dict[str, Any]:
+    settings = pipeline.settings
+    settings.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+    dirs = [settings.data_dir, settings.output_dir, settings.formatted_video_dir, settings.formatted_image_dir, settings.backup_dir]
+    for folder in dirs:
+        folder.mkdir(parents=True, exist_ok=True)
+    return {
+        "env": {
+            "openai_model": settings.openai_model,
+            "openai_api_key": "configured" if settings.openai_api_key else "missing",
+            "x_mode": settings.x_mode,
+            "x_bearer_token": "configured" if os.getenv("X_BEARER_TOKEN", "").strip() else "missing",
+            "x_session_state": "present" if settings.x_session_storage_state.exists() else "missing_or_unused",
+            "live_publish_enabled": settings.live_publish_enabled,
+            "enable_instagram": settings.enable_instagram,
+            "enable_facebook": settings.enable_facebook,
+            "enable_comment_engagement": settings.enable_comment_engagement,
+        },
+        "paths": {
+            "base_dir": str(settings.base_dir),
+            "sqlite_path": str(settings.sqlite_path),
+            "sqlite_accessible": _sqlite_accessible(pipeline),
+            "output_dir": str(settings.output_dir),
+            "backup_dir": str(settings.backup_dir),
+            "webapp_holasalta_path": str(settings.webapp_holasalta_path) if settings.webapp_holasalta_path else "optional_not_set",
+        },
+        "binaries": {
+            "ffmpeg": shutil.which(settings.ffmpeg_path) or "missing",
+            "ffprobe": shutil.which(settings.ffprobe_path) or "missing",
+        },
+        "meta": {
+            "permissions_configured": list(settings.meta_permissions),
+            "instagram_credentials": "configured" if settings.ig_access_token and settings.ig_user_id else "missing",
+            "facebook_credentials": "configured" if settings.fb_access_token or settings.fb_page_id else "missing",
+            "comment_engagement": "disabled" if not settings.enable_comment_engagement else "enabled_requires_instagram_manage_comments",
+        },
+        "media_storage": _media_storage_status(),
+        "sources": {
+            "config_path": str(settings.sources_config_path),
+            "enabled": pipeline.source_registry.enabled_source_names(),
+        },
+        "config": {
+            "thresholds_path": str(settings.thresholds_config_path),
+            "editorial_policy_path": str(settings.editorial_policy_path),
+            "safe_mode_default": settings.safe_mode_default,
+            "schedule_slots": list(settings.schedule_slots),
+            "videos_per_slot": settings.schedule_videos_per_slot,
+            "posts_per_slot": settings.schedule_posts_per_slot,
+            "publish_default_max_posts": settings.publish_default_max_posts,
+            "publish_slot_window_minutes": settings.publish_slot_window_minutes,
+            "publish_max_content_age_hours": settings.publish_max_content_age_hours,
+            "publish_require_same_local_day": settings.publish_require_same_local_day,
+        },
+        "internet": _internet_check(),
+        "queue": pipeline.show_queue(),
+    }
+
+
+def _media_storage_status() -> dict[str, Any]:
+    cfg = media_storage.get_config()
+    payload: dict[str, Any] = {"provider": cfg.provider}
+    if cfg.provider != "r2":
+        payload.update(
+            {
+                "ready": bool(os.getenv("CLOUDINARY_CLOUD_NAME") and os.getenv("CLOUDINARY_API_KEY") and os.getenv("CLOUDINARY_API_SECRET")),
+                "mode": "legacy_cloudinary_or_base_url",
+            }
+        )
+        return payload
+    missing = []
+    if not cfg.r2_account_id and not cfg.r2_endpoint_url:
+        missing.append("R2_ACCOUNT_ID")
+    if not cfg.r2_bucket:
+        missing.append("R2_BUCKET")
+    if not cfg.r2_access_key_id:
+        missing.append("R2_ACCESS_KEY_ID")
+    if not cfg.r2_secret_access_key:
+        missing.append("R2_SECRET_ACCESS_KEY")
+    if not cfg.r2_public_base_url:
+        missing.append("R2_PUBLIC_BASE_URL")
+    invalid = []
+    if cfg.r2_access_key_id.lower().startswith(("http://", "https://")):
+        invalid.append("R2_ACCESS_KEY_ID_is_public_url")
+    payload.update(
+        {
+            "ready": not missing and not invalid,
+            "missing": missing,
+            "invalid": invalid,
+            "account_id": "configured" if cfg.r2_account_id else "missing",
+            "endpoint_url": cfg.r2_endpoint_url or "missing",
+            "bucket": "configured" if cfg.r2_bucket else "missing",
+            "access_key_id": "configured" if cfg.r2_access_key_id else "missing",
+            "secret_access_key": "configured" if cfg.r2_secret_access_key else "missing",
+            "public_base_url": cfg.r2_public_base_url or "missing",
+            "custom_domain": os.getenv("R2_CUSTOM_DOMAIN", "").strip() or "optional_not_set",
+            "site_folder": cfg.r2_site_folder,
+            "temp_folder": cfg.r2_temp_folder,
+            "delete_after_publish": cfg.r2_delete_after_publish,
+        }
+    )
+    return payload
+
+
+def _autorun_health(pipeline: DuoPipeline) -> dict[str, Any]:
+    settings = pipeline.settings
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    retry_limit = _safe_recovery_retry_limit()
+    min_extracted_at = pipeline._min_publish_content_timestamp()
+    counts = pipeline.store.autorun_health_counts(
+        now.isoformat(),
+        min_extracted_at=min_extracted_at,
+        retry_limit=retry_limit,
+    )
+    heartbeat = _read_runtime_heartbeat(settings)
+    issues: list[str] = []
+    critical: list[str] = []
+
+    if not settings.live_publish_enabled:
+        critical.append("DUO_LIVE_PUBLISH_ENABLED=false")
+    if settings.enable_instagram and not (settings.ig_access_token and settings.ig_user_id):
+        critical.append("instagram_credentials_missing")
+    if settings.enable_facebook and not (settings.fb_access_token and settings.fb_page_id):
+        critical.append("facebook_credentials_missing")
+    if not _sqlite_accessible(pipeline):
+        critical.append("sqlite_unavailable")
+    if shutil.which(settings.ffmpeg_path) is None:
+        issues.append("ffmpeg_missing")
+    if shutil.which(settings.ffprobe_path) is None:
+        issues.append("ffprobe_missing")
+
+    heartbeat_age_seconds = None
+    if not heartbeat:
+        issues.append("heartbeat_missing")
+    else:
+        heartbeat_age_seconds = _heartbeat_age_seconds(heartbeat, now)
+        stale_minutes = _heartbeat_stale_minutes()
+        if heartbeat_age_seconds is None:
+            issues.append("heartbeat_timestamp_invalid")
+        elif heartbeat_age_seconds > stale_minutes * 60:
+            issues.append(f"heartbeat_stale_over_{stale_minutes}_minutes")
+        if heartbeat.get("last_error"):
+            issues.append("last_cycle_error_present")
+        if settings.live_publish_enabled and heartbeat.get("live") is False:
+            issues.append("last_heartbeat_not_live")
+
+    if int(counts.get("retry_exhausted") or 0) > 0:
+        issues.append("retry_exhausted_items_present")
+    if int(counts.get("stale_unpublished") or 0) > 0:
+        issues.append("stale_unpublished_items_present")
+
+    status = "ok"
+    if issues:
+        status = "degraded"
+    if critical:
+        status = "critical"
+    return {
+        "status": status,
+        "checked_at": now.isoformat(),
+        "critical": critical,
+        "issues": issues,
+        "heartbeat": heartbeat or {},
+        "heartbeat_age_seconds": heartbeat_age_seconds,
+        "runtime": {
+            "lock_path": str(_runtime_lock_path(settings)),
+            "heartbeat_path": str(_runtime_heartbeat_path(settings)),
+            "log_path": str(_runtime_log_path(settings)),
+            "retry_limit": retry_limit,
+            "min_publish_content_timestamp": min_extracted_at,
+        },
+        "queue": counts,
+    }
+
+
+def _sqlite_accessible(pipeline: DuoPipeline) -> bool:
+    try:
+        with pipeline.store.connection() as conn:
+            conn.execute("SELECT 1").fetchone()
+        return True
+    except Exception:
+        return False
+
+
+def _internet_check() -> str:
+    try:
+        socket.create_connection(("1.1.1.1", 53), timeout=2).close()
+        return "ok"
+    except OSError:
+        return "unavailable"
+
+
+def _test_meta(pipeline: DuoPipeline) -> dict[str, Any]:
+    settings = pipeline.settings
+    payload: dict[str, Any] = {
+        "live_publish_enabled": settings.live_publish_enabled,
+        "instagram": "missing_credentials",
+        "facebook": "missing_credentials",
+        "publishes_live": False,
+    }
+    if settings.ig_access_token and settings.ig_user_id:
+        try:
+            payload["instagram"] = pipeline.publisher.get_ig_publish_limit() or "credentials_present_no_limit_payload"
+        except Exception as exc:
+            payload["instagram"] = f"error: {exc}"
+    if settings.fb_access_token or settings.fb_page_id:
+        payload["facebook"] = "configured"
+    return payload
+
+
+def _runtime_dir(settings: Any) -> Path:
+    runtime = settings.data_dir / "runtime"
+    runtime.mkdir(parents=True, exist_ok=True)
+    return runtime
+
+
+def _runtime_lock_path(settings: Any) -> Path:
+    return _runtime_dir(settings) / "autorun.lock"
+
+
+def _runtime_heartbeat_path(settings: Any) -> Path:
+    return _runtime_dir(settings) / "heartbeat.json"
+
+
+def _runtime_log_path(settings: Any) -> Path:
+    log_dir = settings.base_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return log_dir / "autorun_24_7.log"
+
+
+def _configure_runtime_file_logging(settings: Any) -> None:
+    path = _runtime_log_path(settings)
+    root = logging.getLogger()
+    marker = str(path)
+    for handler in root.handlers:
+        if getattr(handler, "_duo_autorun_path", "") == marker:
+            return
+    handler = RotatingFileHandler(path, maxBytes=5_000_000, backupCount=5, encoding="utf-8")
+    handler.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s %(name)s: %(message)s"))
+    handler._duo_autorun_path = marker  # type: ignore[attr-defined]
+    root.addHandler(handler)
+
+
+@contextmanager
+def _runtime_lock(settings: Any):
+    path = _runtime_lock_path(settings)
+    handle = path.open("a+", encoding="utf-8")
+    acquired = False
+    try:
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(" ")
+            handle.flush()
+        handle.seek(0)
+        if os.name == "nt":
+            import msvcrt
+
+            try:
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                acquired = True
+            except OSError:
+                acquired = False
+        else:
+            import fcntl
+
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+            except OSError:
+                acquired = False
+        if acquired:
+            handle.seek(0)
+            handle.truncate()
+            handle.write(
+                json.dumps(
+                    {
+                        "pid": os.getpid(),
+                        "acquired_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            handle.flush()
+        yield acquired
+    finally:
+        if acquired:
+            try:
+                handle.seek(0)
+                if os.name == "nt":
+                    import msvcrt
+
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
+        handle.close()
+
+
+def _write_runtime_heartbeat(pipeline: DuoPipeline, payload: dict[str, Any]) -> None:
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    full_payload = {
+        "updated_at": now.isoformat(),
+        "pid": os.getpid(),
+        "timezone": pipeline.settings.timezone,
+        "active_slot": pipeline._active_schedule_slot(),
+        **payload,
+    }
+    path = _runtime_heartbeat_path(pipeline.settings)
+    temp_path = path.with_suffix(".tmp")
+    temp_path.write_text(json.dumps(full_payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    temp_path.replace(path)
+
+
+def _read_runtime_heartbeat(settings: Any) -> dict[str, Any]:
+    path = _runtime_heartbeat_path(settings)
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _heartbeat_payload(
+    *,
+    cycle: int,
+    started_at: datetime,
+    result: dict[str, Any],
+    safe_mode: bool,
+    last_error: str,
+    next_sleep_seconds: int,
+) -> dict[str, Any]:
+    finished_at = datetime.now(timezone.utc).replace(microsecond=0)
+    return {
+        "state": "sleeping" if next_sleep_seconds else "completed",
+        "cycle": cycle,
+        "started_at": started_at.isoformat(),
+        "finished_at": finished_at.isoformat(),
+        "duration_seconds": max(0, int((finished_at - started_at).total_seconds())),
+        "safe_mode": safe_mode,
+        "live": not safe_mode,
+        "result": result,
+        "published": int(result.get("published") or 0) if isinstance(result, dict) else 0,
+        "publish_blocked_reason": result.get("publish_blocked_reason") if isinstance(result, dict) else "",
+        "last_error": last_error,
+        "next_sleep_seconds": next_sleep_seconds,
+    }
+
+
+def _heartbeat_age_seconds(heartbeat: dict[str, Any], now: datetime) -> int | None:
+    raw = str(heartbeat.get("updated_at") or "").strip()
+    if not raw:
+        return None
+    try:
+        updated_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if updated_at.tzinfo is None:
+        updated_at = updated_at.replace(tzinfo=timezone.utc)
+    return max(0, int((now - updated_at.astimezone(timezone.utc)).total_seconds()))
+
+
+def _safe_recovery_retry_limit() -> int:
+    raw = os.getenv("DUO_SAFE_RECOVERY_MAX_RETRIES", "3").strip()
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 3
+
+
+def _heartbeat_stale_minutes() -> int:
+    raw = os.getenv("DUO_HEARTBEAT_STALE_MINUTES", "90").strip()
+    try:
+        return max(5, int(raw))
+    except ValueError:
+        return 90
+
+
+def _log_and_print(logger: logging.Logger, message: str) -> None:
+    print(message)
+    logger.info(message)
+
+
+def _format_table(rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        return "Sin items en cola."
+    headers = ["status", "score", "source", "type", "slot", "key", "title"]
+    lines = [" | ".join(headers), " | ".join("-" * len(item) for item in headers)]
+    for row in rows:
+        lines.append(
+            " | ".join(
+                [
+                    str(row.get("pipeline_status") or "")[:14],
+                    str(row.get("score_total") or "")[:6],
+                    str(row.get("source") or "")[:12],
+                    str(row.get("assigned_post_type") or row.get("media_type") or "")[:10],
+                    str(row.get("assigned_slot") or "")[:5],
+                    str(row.get("content_key") or "")[:10],
+                    str(row.get("title") or "").replace("\n", " ")[:70],
+                ]
+            )
+        )
+    return "\n".join(lines)
+
+
+def _print_json(payload: Any) -> None:
+    print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+
+
+def _configure_console_encoding() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+
+
+if __name__ == "__main__":
+    main()

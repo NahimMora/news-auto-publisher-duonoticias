@@ -1,9 +1,17 @@
 # Reglas del proyecto
 
-- Produccion real solo en la PC cuyo `COMPUTERNAME` sea `FERNANDO`. En otras maquinas, usar exclusivamente tests, mocks y `--dry-run`/`--verify`.
+- Produccion real solo en la PC cuyo `COMPUTERNAME` sea `FERNANDO`. En otras maquinas, usar exclusivamente tests, mocks y `--dry-run`/`--verify`. Aplica a los dos componentes: el envio del puente HolaSalta y la publicacion live del pipeline (`--live` + `DUO_LIVE_PUBLISH_ENABLED=true`).
 - HolaSalta es solo lectura: no modificar `C:\HolaSalta\WebApp_HolaSalta` ni `C:\HolaSalta\Ops`. Solo se permite `POST /api/auth/login` y GET de noticias/jobs.
 - No exponer puertos en produccion. No guardar ni imprimir secretos; configurarlos en `.env`, que esta ignorado por Git.
-- La web Node y el procesamiento de valor agregado real estan fuera de este repositorio.
+- La web Node (CMS DuoNoticias) esta fuera de este repositorio; su API esta documentada en `DUO_API.md` y el contrato de ingesta del puente en `docs/INGEST_CONTRACT.md`.
+
+## Componentes
+
+El repo une dos proyectos (merge de `pipeline-completo` en `main`):
+
+- **Pipeline completo** (raiz: `cli/`, `jobs/`, `extractors/`, `scoring/`, `editorial/`, `formatter/`, `publishers/`, `storage/`, ...): entrypoint unico `python -m cli.main`. Comandos, arquitectura y estilo en `AGENTS.md` y `docs/ARCHITECTURE.md`.
+- **Puente HolaSalta → Duo** (`duonoticias_autopublicador/`): entrypoint `python -m duonoticias_autopublicador.main`. Ver `README.md`.
+- Tests: `python -m pytest` corre ambas suites desde `tests/`.
 
 ## Segundo Cerebro (gestión de conocimiento personal)
 
