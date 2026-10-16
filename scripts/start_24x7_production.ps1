@@ -40,12 +40,16 @@ $env:PYTHONUNBUFFERED = "1"
 
 Set-Location -LiteralPath $repoRoot
 
+# PowerShell 5.1 turns native stderr lines into terminating errors under "Stop"
+# when merged with 2>&1; python logging writes to stderr, so relax it here.
+$ErrorActionPreference = "Continue"
 $preflight = & $python -m cli.main preflight 2>&1 | Out-String
 $preflightExit = $LASTEXITCODE
 if ($preflightExit -ne 0) {
     Write-StartLog "preflight fallo (exit $preflightExit); no se inicia el supervisor."
     Add-Content -LiteralPath $log -Value $preflight -Encoding utf8
-    throw "El preflight fallo; no se inicia el pipeline. Ver $log"
+    Write-Error "El preflight fallo; no se inicia el pipeline. Ver $log"
+    exit 1
 }
 
 if ($ValidateOnly) {
