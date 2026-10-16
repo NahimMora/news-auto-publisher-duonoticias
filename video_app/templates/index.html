@@ -1,0 +1,500 @@
+﻿<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Video Processor 4x5</title>
+  <style>
+    :root {
+      --bg: #0b0f16;
+      --panel: #141923;
+      --panel-2: #10151e;
+      --accent: #ffb703;
+      --accent-2: #fb5607;
+      --text: #f2f4f8;
+      --muted: #a7b0bf;
+      --outline: #222837;
+      --success: #3ddc97;
+      --danger: #ff5c5c;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Montserrat", "Poppins", "Segoe UI", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(800px 400px at 10% -10%, rgba(255, 183, 3, 0.12), transparent 60%),
+        radial-gradient(900px 500px at 90% 0%, rgba(251, 86, 7, 0.12), transparent 60%),
+        linear-gradient(180deg, #0b0f16 0%, #0b0f16 100%);
+      min-height: 100vh;
+    }
+
+    header {
+      padding: 28px 24px 16px;
+      text-align: center;
+    }
+
+    header h1 {
+      margin: 0;
+      font-size: 28px;
+      letter-spacing: 1px;
+    }
+
+    header p {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    main {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 24px;
+      display: grid;
+      gap: 24px;
+      grid-template-columns: 1fr;
+    }
+
+    @media (min-width: 960px) {
+      main {
+        grid-template-columns: 360px 1fr;
+        align-items: start;
+      }
+    }
+
+    .card {
+      background: linear-gradient(180deg, #141923 0%, #10151e 100%);
+      border: 1px solid var(--outline);
+      border-radius: 16px;
+      padding: 18px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+    }
+
+    .section-title {
+      margin: 0 0 14px;
+      font-size: 14px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    label {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+
+    input[type="file"],
+    select,
+    input[type="text"] {
+      width: 100%;
+      padding: 10px 12px;
+      background: #0e1320;
+      border: 1px solid #2a3243;
+      color: var(--text);
+      border-radius: 10px;
+      outline: none;
+    }
+
+    input[type="file"] {
+      padding: 10px;
+    }
+
+    .row {
+      display: grid;
+      gap: 12px;
+    }
+
+    .row-2 {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--muted);
+      margin-top: 8px;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      margin-top: 14px;
+    }
+
+    button {
+      border: none;
+      border-radius: 10px;
+      padding: 12px 16px;
+      font-weight: 700;
+      cursor: pointer;
+      background: var(--accent);
+      color: #101010;
+      transition: transform 0.08s ease, opacity 0.2s ease;
+    }
+
+    button:hover { transform: translateY(-1px); }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .status {
+      margin-top: 10px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .upload-list {
+      display: grid;
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .upload-item {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: 150px 1fr auto;
+      align-items: center;
+      background: #0f1420;
+      border: 1px solid #232a3a;
+      padding: 10px;
+      border-radius: 12px;
+    }
+
+    .upload-item video {
+      width: 150px;
+      border-radius: 8px;
+      background: #000;
+    }
+
+    .upload-item button {
+      background: var(--danger);
+      color: #fff;
+    }
+
+    .results {
+      display: grid;
+      gap: 16px;
+    }
+
+    .result-item {
+      background: #0f1420;
+      border: 1px solid #232a3a;
+      border-radius: 14px;
+      padding: 12px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .progress-bar {
+      width: 100%;
+      height: 10px;
+      background: #2b2c36;
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--accent), var(--accent-2));
+      transition: width 0.3s ease;
+    }
+
+    .stage {
+      font-size: 12px;
+      color: var(--muted);
+      letter-spacing: 0.02em;
+    }
+
+    .result-item video {
+      width: 100%;
+      border-radius: 10px;
+      background: #000;
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration: none;
+      font-weight: 600;
+    }
+
+    @media (max-width: 820px) {
+      .row-2 { grid-template-columns: 1fr; }
+      .upload-item { grid-template-columns: 1fr; }
+      .upload-item video { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Local Video Processor</h1>
+    <p>Normaliza a 4:5, aplica overlays y subtítulos palabra por palabra.</p>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2 class="section-title">Configuracion</h2>
+
+      <label for="videos">Subir videos</label>
+      <input id="videos" type="file" name="videos" multiple accept="video/*" />
+
+      <div class="row row-2" style="margin-top: 12px;">
+        <div>
+          <label for="template">Template</label>
+          <select id="template">
+            <option value="">No template</option>
+            {% for name in templates %}
+            <option value="{{ name }}">{{ name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label for="quality">Calidad</label>
+          <select id="quality">
+            <option value="borrador">Borrador (muy baja)</option>
+            <option value="rapido">Rapido (baja aceptable)</option>
+            <option value="normal" selected>Normal</option>
+          </select>
+        </div>
+      </div>
+
+      <label for="videoUrl" style="margin-top: 12px;">Link (X / Instagram)</label>
+      <div class="row" style="grid-template-columns: 1fr auto;">
+        <input id="videoUrl" type="text" placeholder="Pegá el link acá" />
+        <button id="fetchBtn" type="button">Descargar</button>
+      </div>
+
+      <label class="toggle" for="subtitles">
+        <input id="subtitles" type="checkbox" checked />
+        Subtitulos
+      </label>
+
+      <div class="actions">
+        <button id="process">Procesar</button>
+        <span class="status" id="status">Esperando archivos.</span>
+      </div>
+
+      <div class="upload-list" id="uploadList"></div>
+    </section>
+
+    <section class="card">
+      <h2 class="section-title">Resultados</h2>
+      <div class="results" id="results"></div>
+    </section>
+  </main>
+
+  <script>
+    const uploadInput = document.getElementById("videos");
+    const processButton = document.getElementById("process");
+    const statusEl = document.getElementById("status");
+    const resultsEl = document.getElementById("results");
+    const templateSelect = document.getElementById("template");
+    const qualitySelect = document.getElementById("quality");
+    const subtitlesToggle = document.getElementById("subtitles");
+    const uploadList = document.getElementById("uploadList");
+    const videoUrlInput = document.getElementById("videoUrl");
+    const fetchBtn = document.getElementById("fetchBtn");
+
+    let uploadedItems = [];
+    const statusTimers = new Map();
+
+    function renderUploads(items) {
+      uploadList.innerHTML = "";
+      items.forEach(item => {
+        const row = document.createElement("div");
+        row.className = "upload-item";
+        row.innerHTML = `
+          <video controls src="/uploads/${item.filename}"></video>
+          <input type="text" placeholder="Titulo (opcional)" value="${item.title || ""}" />
+          <button data-id="${item.id}">Eliminar</button>
+        `;
+        const input = row.querySelector("input");
+        const video = row.querySelector("video");
+        input.addEventListener("input", () => {
+          item.title = input.value;
+        });
+        video.addEventListener("click", (e) => {
+          e.preventDefault();
+          const current = item.title || "";
+          const value = window.prompt("Titulo para este video:", current);
+          if (value !== null) {
+            item.title = value.trim();
+            input.value = item.title;
+          }
+        });
+        const btn = row.querySelector("button");
+        btn.addEventListener("click", async () => {
+          await fetch("/delete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: item.id, filename: item.filename })
+          });
+          uploadedItems = uploadedItems.filter(v => v.id !== item.id);
+          renderUploads(uploadedItems);
+        });
+        uploadList.appendChild(row);
+      });
+    }
+
+    async function loadExistingUploads() {
+      const response = await fetch("/uploads-list");
+      const data = await response.json();
+      if (response.ok) {
+        uploadedItems = data.items || [];
+        renderUploads(uploadedItems);
+      }
+    }
+
+    loadExistingUploads();
+
+    uploadInput.addEventListener("change", async () => {
+      const files = Array.from(uploadInput.files);
+      if (!files.length) {
+        statusEl.textContent = "Esperando archivos.";
+        return;
+      }
+      statusEl.textContent = "Subiendo...";
+      const formData = new FormData();
+      files.forEach(file => formData.append("videos", file));
+
+      const response = await fetch("/upload", { method: "POST", body: formData });
+      const data = await response.json();
+      if (!response.ok) {
+        statusEl.textContent = data.error || "Fallo la subida.";
+        return;
+      }
+      const newItems = data.items || [];
+      uploadedItems = uploadedItems.concat(newItems);
+      renderUploads(uploadedItems);
+      statusEl.textContent = `Subidos ${uploadedItems.length} archivo(s).`;
+    });
+
+    fetchBtn.addEventListener("click", async () => {
+      const url = (videoUrlInput.value || "").trim();
+      if (!url) {
+        statusEl.textContent = "Pegá un link primero.";
+        return;
+      }
+      fetchBtn.disabled = true;
+      statusEl.textContent = "Descargando video...";
+      const response = await fetch("/fetch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url })
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        statusEl.textContent = data.error || "Fallo la descarga.";
+        fetchBtn.disabled = false;
+        return;
+      }
+      if (data.item) {
+        uploadedItems = uploadedItems.concat([data.item]);
+        renderUploads(uploadedItems);
+      }
+      statusEl.textContent = "Video descargado.";
+      fetchBtn.disabled = false;
+    });
+
+    processButton.addEventListener("click", async () => {
+      if (!uploadedItems.length) {
+        statusEl.textContent = "Subi archivos primero.";
+        return;
+      }
+      processButton.disabled = true;
+      statusEl.textContent = "Procesando...";
+      resultsEl.innerHTML = "";
+
+      const payload = {
+        items: uploadedItems,
+        template: templateSelect.value || null,
+        subtitles: subtitlesToggle.checked,
+        quality: qualitySelect.value || "normal"
+      };
+
+      const response = await fetch("/process", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        statusEl.textContent = data.error || "Fallo el proceso.";
+        processButton.disabled = false;
+        return;
+      }
+
+      const results = data.results || [];
+      statusEl.textContent = `Procesando ${results.length} video(s).`;
+
+      results.forEach(result => {
+        const item = document.createElement("div");
+        item.className = "result-item";
+        item.innerHTML = `
+          <div class="stage" id="stage-${result.id}">En cola...</div>
+          <div class="progress-bar"><div class="progress-fill" id="progress-${result.id}"></div></div>
+          <video controls id="video-${result.id}" style="display:none"></video>
+          <a href="#" id="download-${result.id}" style="display:none">Descargar video</a>
+        `;
+        resultsEl.appendChild(item);
+        pollStatus(result);
+      });
+      processButton.disabled = false;
+    });
+
+    async function pollStatus(result) {
+      if (!result.status) return;
+      if (statusTimers.has(result.id)) {
+        clearInterval(statusTimers.get(result.id));
+      }
+
+      const tick = async () => {
+        const response = await fetch(result.status);
+        const data = await response.json();
+        const stageEl = document.getElementById(`stage-${result.id}`);
+        const progressEl = document.getElementById(`progress-${result.id}`);
+        const videoEl = document.getElementById(`video-${result.id}`);
+        const downloadEl = document.getElementById(`download-${result.id}`);
+
+        if (stageEl && data.message) {
+          stageEl.textContent = `${data.message} (${data.stage || ""})`;
+        }
+        if (progressEl && typeof data.progress === "number") {
+          progressEl.style.width = `${Math.min(100, Math.max(0, data.progress))}%`;
+        }
+        if (data.stage === "done") {
+          if (videoEl) {
+            videoEl.src = result.preview;
+            videoEl.style.display = "block";
+          }
+          if (downloadEl) {
+            downloadEl.href = result.download;
+            downloadEl.style.display = "inline";
+          }
+          clearInterval(statusTimers.get(result.id));
+        }
+        if (data.stage === "error") {
+          clearInterval(statusTimers.get(result.id));
+        }
+      };
+
+      await tick();
+      const timer = setInterval(tick, 1000);
+      statusTimers.set(result.id, timer);
+    }
+  </script>
+</body>
+</html>

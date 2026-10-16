@@ -1,0 +1,31 @@
+# Secretos
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# Datos de runtime (pesados / locales)
+data/
+logs/
+storage/backups/
+extractor_x/downloads/
+extractor_x/cache_*.json
+extractor_x/results_*.json
+extractor_x/processed_videos.json
+ops/*.json
+*.sqlite3
+*.faiss
+
+# HTML de debug / volcados temporales
+*_debug.html
+tmp_*.html
+
+# Sesiones / cookies
+*cookies*.txt
+*storage_state*.json
+*session*.json

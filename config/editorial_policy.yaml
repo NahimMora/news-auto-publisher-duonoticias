@@ -1,0 +1,146 @@
+version: 1
+general_tone: "moderado, claro, rioplatense"
+default_decision: manual_review
+political_line: "informativa, no militante, configurable"
+
+hard_rules:
+  - "No inventar datos, cifras, delitos, relaciones ni nombres."
+  - "Separar hechos de opinion cuando el contenido sea politico o economico."
+  - "No publicar contenido sensible si falta contexto verificable."
+  - "No exponer menores en situaciones sensibles."
+  - "No usar hashtags partidarios salvo configuracion explicita."
+  - "No incluir URLs ni @menciones en captions generadas."
+  - "El caption total no puede superar 2500 caracteres."
+
+formats:
+  x_viral_reel:
+    title_max_words: 10
+    title_max_chars: 80
+    caption_min_chars: 350
+    caption_max_chars: 800
+    hook_max_words: 12
+    tone: "picante, claro, rioplatense, no difamatorio"
+    allow_emojis: true
+    max_emojis: 6
+
+  paparazzi:
+    tone: "espectaculos argentino, fuerte pero verificable"
+    caption_min_chars: 400
+    caption_max_chars: 1200
+    allow_emojis: true
+    max_emojis: 8
+    structure:
+      - "🔥 Título gancho (1 línea, sin emojis en el título)"
+      - ""
+      - "📌 Subtítulo de contexto"
+      - "Párrafo 1: quién es y qué pasó"
+      - ""
+      - "💬 Subtítulo de desarrollo"
+      - "Párrafo 2: detalles clave, declaraciones o giro"
+      - ""
+      - "🎯 Subtítulo de cierre"
+      - "Párrafo 3: remate + pregunta CTA"
+
+  news:
+    tone: "informativo, sobrio en temas sensibles"
+    caption_min_chars: 500
+    caption_max_chars: 2200
+    require_who_what_where_when: true
+    allow_emojis: true
+    max_emojis: 5
+    structure:
+      - "📣 Título informativo (1 línea, directo, sin emojis)"
+      - ""
+      - "▪️ Subtítulo: Qué pasó"
+      - "Párrafo: quién, qué, dónde, cuándo (2-3 oraciones)"
+      - ""
+      - "▪️ Subtítulo: Por qué importa"
+      - "Párrafo: impacto, contexto, datos clave (2-3 oraciones)"
+      - ""
+      - "▪️ Subtítulo: El detalle clave"
+      - "Párrafo: dato concreto, cifra o declaración destacada"
+      - ""
+      - "❓ Pregunta corta para comentarios (CTA final)"
+
+  salta_local:
+    tone: "cercano, local, vecinal, informativo"
+    caption_min_chars: 400
+    caption_max_chars: 1800
+    allow_emojis: true
+    max_emojis: 5
+    structure:
+      - "📍 Título local (menciona Salta si es relevante)"
+      - ""
+      - "▪️ Subtítulo: Lo que ocurrió"
+      - "Párrafo: hechos concretos (quién, qué, dónde)"
+      - ""
+      - "▪️ Subtítulo: El impacto en Salta"
+      - "Párrafo: consecuencias locales o afectados"
+      - ""
+      - "❓ Pregunta al lector (CTA)"
+
+  policial_salta:
+    tone: "sobrio, informativo, sin afirmar culpabilidad sin condena"
+    caption_min_chars: 350
+    caption_max_chars: 1600
+    allow_emojis: true
+    max_emojis: 4
+    structure:
+      - "🚨 Título descriptivo (quién / qué / dónde)"
+      - ""
+      - "▪️ Subtítulo: Los hechos"
+      - "Párrafo: descripción objetiva del hecho policial o judicial"
+      - ""
+      - "▪️ Subtítulo: La causa / el imputado"
+      - "Párrafo: estado procesal, medidas tomadas, caratula"
+      - ""
+      - "❓ Opinión del lector (CTA)"
+
+allowed_hashtags:
+  - "#DuoNoticias"
+  - "#Noticias"
+  - "#Argentina"
+  - "#UltimosMinutos"
+
+# Solo usar cuando el hecho ocurrio FISICAMENTE en Salta provincia.
+geo_hashtags_salta:
+  - "#Salta"
+  - "#SaltaArgentina"
+
+hashtag_rules:
+  - "No usar #Salta ni #SaltaArgentina si la noticia no ocurrio explicitamente en Salta."
+  - "No usar hashtags geograficos para noticias nacionales, internacionales o de espectaculos."
+  - "Sources locales (eltribuno, ariesonline, eloncesalta, nuevodiariodesalta, fiscalespenalesalta, justiciasalta) pueden usar geo_hashtags_salta."
+
+blocked_hashtags:
+  - "#Milei2027"
+  - "#Kirchnerismo"
+  - "#AntiK"
+  - "#Libertarios"
+  - "#Peronismo"
+
+sensitive_policy:
+  crime: "tono sobrio; no afirmar autoria penal sin condena o fuente clara"
+  minors: "evitar exposicion, nombres e imagenes si no es imprescindible"
+  accidents: "no publicar muerte visible ni gore"
+  doxxing: "rechazar datos privados"
+
+ranking:
+  top_n_per_run: 10
+  min_virality_score: 0.3
+  max_content_age_hours: 24
+  prefer_local_salta: true
+  priority_categories:
+    - salta
+    - policial_salta
+    - espectaculos
+    - nacional
+    - economia
+    - viral
+  local_sources:
+    - eltribuno
+    - ariesonline
+    - eloncesalta
+    - nuevodiariodesalta
+    - fiscalespenalesalta
+    - justiciasalta
