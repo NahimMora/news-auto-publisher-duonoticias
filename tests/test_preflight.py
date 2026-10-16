@@ -13,7 +13,8 @@ from storage.settings import get_settings
 READY_ENV = {
     "COMPUTERNAME": "FERNANDO",
     "DUO_LIVE_PUBLISH_ENABLED": "true",
-    "OPENAI_API_KEY": "sk-test",
+    "GEMINI_API_KEY": "gm-test",
+    "LLM_PROVIDER": "gemini",
     "ENABLE_INSTAGRAM": "false",
     "ENABLE_FACEBOOK": "false",
     "ENABLE_DUO_WEB": "true",
@@ -44,12 +45,12 @@ class PreflightTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIn("not_production_machine", result["critical"])
 
-    def test_missing_credentials_and_openai_are_critical(self) -> None:
+    def test_missing_credentials_and_llm_key_are_critical(self) -> None:
         result = self._preflight(
-            {**READY_ENV, "OPENAI_API_KEY": "", "ENABLE_FACEBOOK": "true", "META_ACCESS_TOKEN": "", "META_PAGE_ID": "", "FB_ACCESS_TOKEN": "", "FB_PAGE_ID": ""}
+            {**READY_ENV, "GEMINI_API_KEY": "", "ENABLE_FACEBOOK": "true", "META_ACCESS_TOKEN": "", "META_PAGE_ID": "", "FB_ACCESS_TOKEN": "", "FB_PAGE_ID": ""}
         )
         self.assertFalse(result["ok"])
-        self.assertIn("OPENAI_API_KEY_missing", result["critical"])
+        self.assertIn("GEMINI_API_KEY_missing", result["critical"])
         self.assertIn("facebook_missing_credentials", result["critical"])
 
     def test_no_platform_is_critical(self) -> None:
@@ -59,7 +60,7 @@ class PreflightTests(unittest.TestCase):
     def test_output_has_no_secret_values(self) -> None:
         result = self._preflight(READY_ENV)
         self.assertNotIn("admin-key", repr(result))
-        self.assertNotIn("sk-test", repr(result))
+        self.assertNotIn("gm-test", repr(result))
 
 
 if __name__ == "__main__":

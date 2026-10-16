@@ -462,8 +462,9 @@ def _doctor(pipeline: DuoPipeline) -> dict[str, Any]:
         folder.mkdir(parents=True, exist_ok=True)
     return {
         "env": {
-            "openai_model": settings.openai_model,
-            "openai_api_key": "configured" if settings.openai_api_key else "missing",
+            "llm_provider": settings.llm.provider,
+            "llm_model": settings.llm.model,
+            "llm_api_key": "configured" if settings.llm.ready else "missing",
             "x_mode": settings.x_mode,
             "x_bearer_token": "configured" if os.getenv("X_BEARER_TOKEN", "").strip() else "missing",
             "x_session_state": "present" if settings.x_session_storage_state.exists() else "missing_or_unused",
@@ -642,9 +643,9 @@ def _preflight(pipeline: DuoPipeline) -> dict[str, Any]:
     sources = pipeline.source_registry.enabled_source_names()
     if not sources:
         critical.append("no_enabled_sources")
-    if not settings.openai_api_key:
+    if not settings.llm.ready:
         # Without it editorial silently falls back to template captions.
-        critical.append("OPENAI_API_KEY_missing")
+        critical.append(f"{settings.llm.api_key_env}_missing")
 
     platforms: dict[str, str] = {}
     if settings.enable_instagram:
@@ -681,6 +682,7 @@ def _preflight(pipeline: DuoPipeline) -> dict[str, Any]:
         "warnings": warnings,
         "sources": sources,
         "platforms": platforms,
+        "llm": {"provider": settings.llm.provider, "model": settings.llm.model},
     }
 
 

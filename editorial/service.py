@@ -9,7 +9,7 @@ from editorial.prompting import build_editorial_user_prompt, is_x_editorial_row,
 from growth.heuristics import classify_hook_type, classify_tone, text_signature
 from storage.models import EditorialPackage
 from storage.settings import PipelineSettings, get_settings
-from utils.http_client import HttpClient
+from utils.llm_client import generate_json
 
 
 _EMOJI_RE = re.compile(
@@ -43,7 +43,7 @@ class EditorialAI:
                 prompt=prompt,
                 input_payload=input_payload,
             )
-        if not self.settings.openai_api_key:
+        if not self.settings.llm.ready:
             return self._fallback(
                 row,
                 growth_feedback=growth_feedback,
@@ -51,7 +51,7 @@ class EditorialAI:
                 input_payload=input_payload,
             )
         try:
-            payload = self._call_openai(system_prompt, prompt)
+            payload = self._call_llm(system_prompt, prompt)
             normalized = self._normalize_payload(
                 payload,
                 row=row,
@@ -63,50 +63,14 @@ class EditorialAI:
             return self._fallback(row, growth_feedback=growth_feedback, prompt=prompt, input_payload=input_payload)
         return EditorialPackage(**normalized)
 
-    def _call_openai(self, system_prompt: str, user_prompt: str) -> Dict[str, Any]:
-        headers = {
-            "Authorization": f"Bearer {self.settings.openai_api_key}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "model": self.settings.openai_model,
-            "temperature": self.settings.openai_temperature,
-            "max_output_tokens": self.settings.openai_max_output_tokens,
-            "input": [
-                {
-                    "role": "system",
-                    "content": [{"type": "input_text", "text": system_prompt}],
-                },
-                {
-                    "role": "user",
-                    "content": [{"type": "input_text", "text": user_prompt}],
-                },
-            ],
-        }
-        client = HttpClient(headers=headers, timeout=90, retries=3, backoff_base=2, backoff_max=30)
-        try:
-            response = client.post(self.settings.openai_base_url, json=payload)
-            response.raise_for_status()
-            parsed = response.json()
-        finally:
-            client.close()
-        text = self._extract_output_text(parsed)
-        match = re.search(r"\{.*\}", text, re.S)
-        if not match:
-            raise RuntimeError("Respuesta editorial invalida")
-        return json.loads(match.group(0))
-
-    @staticmethod
-    def _extract_output_text(payload: Dict[str, Any]) -> str:
-        direct = str(payload.get("output_text") or "").strip()
-        if direct:
-            return direct
-        chunks = []
-        for item in payload.get("output") or []:
-            for block in item.get("content") or []:
-                if block.get("type") == "output_text" and block.get("text"):
-                    chunks.append(block["text"])
-        return "\n".join(chunks).strip()
+    def _call_llm(self, system_prompt: str, user_prompt: str) -> Dict[str, Any]:
+        return generate_json(
+            system_prompt,
+            user_prompt,
+            temperature=self.settings.llm_temperature,
+            max_output_tokens=self.settings.llm_max_output_tokens,
+            config=self.settings.llm,
+        )
 
     def _normalize_payload(
         self,

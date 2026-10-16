@@ -12,7 +12,7 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-from utils.http_client import HttpClient
+from utils.llm_client import generate_text
 
 
 def _load_dotenv(path: Path) -> None:
@@ -31,11 +31,9 @@ def _load_dotenv(path: Path) -> None:
 
 _load_dotenv(BASE_DIR / ".env")
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OPENAI_MODEL = os.getenv("CAROUSEL_OPENAI_MODEL", os.getenv("OPENAI_MODEL", "gpt-4.1-mini"))
-OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1/responses")
-OPENAI_TEMPERATURE = float(os.getenv("CAROUSEL_OPENAI_TEMPERATURE", "0.4"))
-OPENAI_MAX_OUTPUT_TOKENS = int(os.getenv("CAROUSEL_OPENAI_MAX_OUTPUT_TOKENS", "450"))
+# Provider/model/key come from utils.llm_client (LLM_PROVIDER, GEMINI_*).
+CAROUSEL_TEMPERATURE = float(os.getenv("CAROUSEL_TEMPERATURE", os.getenv("CAROUSEL_OPENAI_TEMPERATURE", "0.4")))
+CAROUSEL_MAX_OUTPUT_TOKENS = int(os.getenv("CAROUSEL_MAX_OUTPUT_TOKENS", "900"))
 
 TEMPLATE_PATH = Path(
     os.getenv(
@@ -80,44 +78,14 @@ def _clean_text(value: str) -> str:
     return re.sub(r"\s+", " ", (value or "")).strip()
 
 
-def _build_payload(text: str) -> dict:
-    return {
-        "model": OPENAI_MODEL,
-        "temperature": OPENAI_TEMPERATURE,
-        "max_output_tokens": OPENAI_MAX_OUTPUT_TOKENS,
-        "input": [
-            {"role": "system", "content": [{"type": "input_text", "text": CURATION_PROMPT}]},
-            {"role": "user", "content": [{"type": "input_text", "text": text}]},
-        ],
-    }
-
-
-def _extract_output_text(payload: dict) -> str:
-    text = (payload.get("output_text") or "").strip()
-    if text:
-        return text
-    outputs = payload.get("output") or []
-    chunks = []
-    for item in outputs:
-        for block in item.get("content") or []:
-            if block.get("type") == "output_text" and block.get("text"):
-                chunks.append(block["text"])
-    return "\n".join(chunks).strip()
-
-
-def _call_openai(text: str) -> str:
-    if not OPENAI_API_KEY:
-        raise RuntimeError("Missing OPENAI_API_KEY")
-    payload = _build_payload(text)
-    headers = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
-    client = HttpClient(headers=headers, timeout=60, retries=3, backoff_base=2, backoff_max=20)
-    try:
-        resp = client.post(OPENAI_BASE_URL, json=payload)
-        resp.raise_for_status()
-        data = resp.json()
-    finally:
-        client.close()
-    return _extract_output_text(data)
+def _call_llm(text: str) -> str:
+    return generate_text(
+        CURATION_PROMPT,
+        text,
+        temperature=CAROUSEL_TEMPERATURE,
+        max_output_tokens=CAROUSEL_MAX_OUTPUT_TOKENS,
+        timeout=60,
+    )
 
 
 def _wrap_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, max_width: int) -> List[str]:
@@ -259,7 +227,7 @@ def create_instagram_carousel_from_news(
         return [str(slide1)]
 
     try:
-        curated = _call_openai(raw_text)
+        curated = _call_llm(raw_text)
     except Exception:
         curated = raw_text
 

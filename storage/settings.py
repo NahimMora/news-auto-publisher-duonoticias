@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 from dotenv import load_dotenv
 
 from storage.config_loader import load_yaml_config
+from utils.llm_client import LLMConfig, llm_config_from_env
 from utils.machine_guard import is_production_machine
 
 
@@ -140,11 +141,9 @@ class PipelineSettings:
     score_validation_deviation_threshold: float
     source_ranking_lookback_days: int
     editorial_master_prompt_path: Path | None
-    openai_api_key: str
-    openai_model: str
-    openai_base_url: str
-    openai_temperature: float
-    openai_max_output_tokens: int
+    llm: LLMConfig
+    llm_temperature: float
+    llm_max_output_tokens: int
     ig_graph_version: str
     ig_access_token: str
     ig_user_id: str
@@ -300,11 +299,10 @@ def get_settings() -> PipelineSettings:
         ),
         source_ranking_lookback_days=_get_int("DUO_SOURCE_RANKING_LOOKBACK_DAYS", 30),
         editorial_master_prompt_path=Path(editorial_prompt) if editorial_prompt else None,
-        openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),
-        openai_model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini").strip(),
-        openai_base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1/responses").strip(),
-        openai_temperature=_get_float("OPENAI_TEMPERATURE", 0.7),
-        openai_max_output_tokens=_get_int("OPENAI_MAX_OUTPUT_TOKENS", 900),
+        llm=llm_config_from_env(),
+        llm_temperature=_get_float("LLM_TEMPERATURE", _get_float("OPENAI_TEMPERATURE", 0.7)),
+        # Editorial JSON (caption up to 1500 chars + slides); headroom for Gemini thinking tokens.
+        llm_max_output_tokens=_get_int("LLM_MAX_OUTPUT_TOKENS", 2048),
         ig_graph_version=os.getenv("IG_GRAPH_VERSION", "v25.0").strip(),
         ig_access_token=(os.getenv("META_ACCESS_TOKEN") or os.getenv("IG_ACCESS_TOKEN", "")).strip(),
         ig_user_id=(os.getenv("META_IG_USER_ID") or os.getenv("IG_USER_ID", "")).strip(),

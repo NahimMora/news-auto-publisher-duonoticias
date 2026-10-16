@@ -35,6 +35,9 @@ function Write-StartLog([string]$message) {
 # (ENABLE_INSTAGRAM, ENABLE_FACEBOOK, ENABLE_DUO_WEB, DUO_WEB_MODE) viven en .env.
 $env:DUO_LIVE_PUBLISH_ENABLED = "true"
 $env:DUO_SAFE_MODE_DEFAULT = "false"
+# Web DuoNoticias desactivada por ahora (decision 2026-10-16): solo redes.
+$env:ENABLE_DUO_WEB = "false"
+$env:DUO_WEB_MODE = "disabled"
 $env:PYTHONIOENCODING = "utf-8"
 $env:PYTHONUNBUFFERED = "1"
 

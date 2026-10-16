@@ -64,9 +64,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start_24x7_production.ps1 -Va
 powershell -ExecutionPolicy Bypass -File .\scripts\register_scheduled_task.ps1
 ```
 
-Each run of the task executes `scripts\start_24x7_production.ps1`: it refuses other machines, sets the live profile (`DUO_LIVE_PUBLISH_ENABLED=true`, `DUO_SAFE_MODE_DEFAULT=false`), runs `preflight` and only then `run-24-7 --live`. If the supervisor is already running it holds `data\runtime\autorun.lock` and the new instance exits, so the 5-minute trigger doubles as restart-on-crash. Preflight failures go to `logs\start_24x7.log`.
+Each run of the task executes `scripts\start_24x7_production.ps1`: it refuses other machines, sets the live profile (`DUO_LIVE_PUBLISH_ENABLED=true`, `DUO_SAFE_MODE_DEFAULT=false`, web delivery off: `ENABLE_DUO_WEB=false`), runs `preflight` and only then `run-24-7 --live`. If the supervisor is already running it holds `data\runtime\autorun.lock` and the new instance exits, so the 5-minute trigger doubles as restart-on-crash. Preflight failures go to `logs\start_24x7.log`.
 
-`preflight` is critical on: other machine, live flag off, no enabled source, missing `OPENAI_API_KEY` (editorial would fall back to template captions), no enabled platform, or an enabled platform (`ENABLE_INSTAGRAM`, `ENABLE_FACEBOOK`, `ENABLE_DUO_WEB`) without credentials or, for Instagram, without ready media storage.
+`preflight` is critical on: other machine, live flag off, no enabled source, missing LLM key (`GEMINI_API_KEY` with the default `LLM_PROVIDER=gemini`; editorial would fall back to template captions), no enabled platform, or an enabled platform (`ENABLE_INSTAGRAM`, `ENABLE_FACEBOOK`, `ENABLE_DUO_WEB`) without credentials or, for Instagram, without ready media storage.
 
 Stop: `Disable-ScheduledTask -TaskName DuoNoticias-24x7`, then end the `python -m cli.main run-24-7` process.
 

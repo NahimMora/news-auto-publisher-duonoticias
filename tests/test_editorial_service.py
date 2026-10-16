@@ -10,7 +10,7 @@ from storage.settings import get_settings
 
 class EditorialServiceTests(unittest.TestCase):
     def test_normalized_payload_preserves_cta_and_personality(self) -> None:
-        with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "", "GEMINI_API_KEY": ""}):
             get_settings.cache_clear()
             service = EditorialAI(get_settings())
             row = {
@@ -45,7 +45,7 @@ class EditorialServiceTests(unittest.TestCase):
         self.assertEqual(normalized["overlay"], "Titulo base")
 
     def test_fallback_uses_source_specific_style(self) -> None:
-        with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "", "GEMINI_API_KEY": ""}):
             get_settings.cache_clear()
             service = EditorialAI(get_settings())
             package = service.generate(
@@ -64,7 +64,7 @@ class EditorialServiceTests(unittest.TestCase):
         self.assertNotIn("Fuente:", package.caption)
 
     def test_fallback_treats_x_manual_video_like_x(self) -> None:
-        with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "", "GEMINI_API_KEY": ""}):
             get_settings.cache_clear()
             service = EditorialAI(get_settings())
             package = service.generate(
@@ -112,7 +112,7 @@ class EditorialServiceTests(unittest.TestCase):
         self.assertEqual(caption, "Primera frase completa.\n\nSegunda frase completa.")
 
     def test_truncated_article_excerpt_is_not_used_as_final_caption(self) -> None:
-        with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "", "GEMINI_API_KEY": ""}):
             get_settings.cache_clear()
             service = EditorialAI(get_settings())
             normalized = service._normalize_payload(
@@ -141,7 +141,7 @@ class EditorialServiceTests(unittest.TestCase):
         self.assertIn("¿Que opinas?", normalized["caption"])
 
     def test_news_caption_gets_extra_emojis_when_model_returns_too_few(self) -> None:
-        with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "", "GEMINI_API_KEY": ""}):
             get_settings.cache_clear()
             service = EditorialAI(get_settings())
             normalized = service._normalize_payload(
