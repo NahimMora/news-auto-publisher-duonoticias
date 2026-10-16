@@ -38,7 +38,7 @@ or:
 The loop catches per-cycle failures, logs the exception, sleeps and continues. Use `CTRL+C` for clean shutdown.
 The hardened autorun writes:
 - `logs\autorun_24_7.log`: rotating runtime log from the CLI.
-- `logs\autorun_24_7_console.log`: stdout/stderr when launched through the autorun BAT.
+- `logs\start_24x7.log`: start attempts and preflight failures of the scheduled task.
 - `data\runtime\heartbeat.json`: last cycle state, duration, result and next sleep.
 - `data\runtime\autorun.lock`: process lock to avoid duplicate publishers.
 
@@ -51,20 +51,29 @@ The 24/7 loop aligns cycles to the configured publication blocks when the next b
 - `DUO_SAFE_RECOVERY_MAX_RETRIES=3`
 - `DUO_HEARTBEAT_STALE_MINUTES=90`
 
-## Windows Autorun
+## Windows Autorun (produccion, solo FERNANDO)
 
-Register the live autorun task:
+Same scheme as `LaVozRiojana-24x7`:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\install_autorun_task.ps1 -RunNow
+# 1. Gate: exit 1 and list what is missing if live publishing cannot work
+.\.venv\Scripts\python.exe -m cli.main preflight
+powershell -ExecutionPolicy Bypass -File .\scripts\start_24x7_production.ps1 -ValidateOnly
+
+# 2. Register DuoNoticias-24x7 (every 5 minutes; add -Disable to register it off)
+powershell -ExecutionPolicy Bypass -File .\scripts\register_scheduled_task.ps1
 ```
 
-The task runs `autorun_24_7.bat` at user logon, ignores duplicate starts and asks Task Scheduler to restart the process every 5 minutes if it exits unexpectedly.
+Each run of the task executes `scripts\start_24x7_production.ps1`: it refuses other machines, sets the live profile (`DUO_LIVE_PUBLISH_ENABLED=true`, `DUO_SAFE_MODE_DEFAULT=false`), runs `preflight` and only then `run-24-7 --live`. If the supervisor is already running it holds `data\runtime\autorun.lock` and the new instance exits, so the 5-minute trigger doubles as restart-on-crash. Preflight failures go to `logs\start_24x7.log`.
+
+`preflight` is critical on: other machine, live flag off, no enabled source, missing `OPENAI_API_KEY` (editorial would fall back to template captions), no enabled platform, or an enabled platform (`ENABLE_INSTAGRAM`, `ENABLE_FACEBOOK`, `ENABLE_DUO_WEB`) without credentials or, for Instagram, without ready media storage.
+
+Stop: `Disable-ScheduledTask -TaskName DuoNoticias-24x7`, then end the `python -m cli.main run-24-7` process.
 
 Check health:
 
 ```powershell
-python -m cli.main autorun-health
+.\.venv\Scripts\python.exe -m cli.main autorun-health
 ```
 
 Operational status:

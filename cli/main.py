@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 from jobs.pipeline import DuoPipeline
 from storage.settings import get_settings
 from utils import media_storage
+from utils.machine_guard import is_production_machine
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -86,6 +87,7 @@ def build_parser() -> argparse.ArgumentParser:
     test_source = subparsers.add_parser("test-source", help="Scan a source with max=1")
     test_source.add_argument("--source", required=True)
     subparsers.add_parser("autorun-health", help="Check 24/7 autorun health")
+    subparsers.add_parser("preflight", help="Gate for live 24/7 start: exit 1 if live publishing cannot work")
     subparsers.add_parser("doctor", help="Check runtime configuration")
     subparsers.add_parser("status", help="Show status summary")
 
@@ -236,6 +238,12 @@ def main(argv: List[str] | None = None) -> None:
         return
     if command == "autorun-health":
         _print_json(_autorun_health(pipeline))
+        return
+    if command == "preflight":
+        payload = _preflight(pipeline)
+        _print_json(payload)
+        if not payload["ok"]:
+            raise SystemExit(1)
         return
     if command in {"doctor", "status"}:
         payload = _doctor(pipeline) if command == "doctor" else pipeline.show_stats()
@@ -616,6 +624,63 @@ def _autorun_health(pipeline: DuoPipeline) -> dict[str, Any]:
             "min_publish_content_timestamp": min_extracted_at,
         },
         "queue": counts,
+    }
+
+
+def _preflight(pipeline: DuoPipeline) -> dict[str, Any]:
+    """Everything a live 24/7 start needs; only names and states, never secret values."""
+    settings = pipeline.settings
+    critical: list[str] = []
+    warnings: list[str] = []
+
+    if not is_production_machine():
+        critical.append("not_production_machine")
+    if not settings.live_publish_enabled:
+        critical.append("DUO_LIVE_PUBLISH_ENABLED_false_or_not_production_machine")
+    if not _sqlite_accessible(pipeline):
+        critical.append("sqlite_unavailable")
+    sources = pipeline.source_registry.enabled_source_names()
+    if not sources:
+        critical.append("no_enabled_sources")
+    if not settings.openai_api_key:
+        # Without it editorial silently falls back to template captions.
+        critical.append("OPENAI_API_KEY_missing")
+
+    platforms: dict[str, str] = {}
+    if settings.enable_instagram:
+        ready = bool(settings.ig_access_token and settings.ig_user_id)
+        platforms["instagram"] = "ready" if ready else "missing_credentials"
+        if ready and not _media_storage_status().get("ready"):
+            platforms["instagram"] = "media_storage_not_ready"
+    if settings.enable_facebook:
+        platforms["facebook"] = "ready" if settings.fb_access_token and settings.fb_page_id else "missing_credentials"
+    if settings.enable_duo_web:
+        if pipeline.duo_web is None:
+            platforms["duo_web"] = f"not_configured_mode_{settings.duo_web_mode}"
+        else:
+            platforms["duo_web"] = "ready"
+    for name, state in platforms.items():
+        if state != "ready":
+            critical.append(f"{name}_{state}")
+    if not platforms:
+        critical.append("no_enabled_publish_platforms")
+
+    if "holasalta" in sources and not settings.hs_api_password:
+        critical.append("holasalta_enabled_without_HS_API_PASSWORD")
+    for binary in (settings.ffmpeg_path, settings.ffprobe_path):
+        if shutil.which(binary) is None:
+            warnings.append(f"{Path(binary).name}_missing")
+    if _internet_check() != "ok":
+        warnings.append("internet_unavailable")
+
+    return {
+        "ok": not critical,
+        "checked_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        "machine": os.getenv("COMPUTERNAME", ""),
+        "critical": critical,
+        "warnings": warnings,
+        "sources": sources,
+        "platforms": platforms,
     }
 
 

@@ -5,6 +5,8 @@
 - **Run one safe cycle**: `python -m cli.main run-once --safe-mode`
 - **Dry run**: `python -m cli.main dry-run`
 - **24/7 loop**: `python -m cli.main run-24-7`
+- **Live gate**: `python -m cli.main preflight` (exit 1 if live publishing cannot work)
+- **Production service (FERNANDO)**: task `DuoNoticias-24x7` via `scripts/register_scheduled_task.ps1` -> `scripts/start_24x7_production.ps1` (see docs/OPERATIONS.md)
 - **Queue**: `python -m cli.main queue --format table`
 - **Import X URL**: `python -m cli.main import-x-url --url "..."`
 - **Launch UI**: `python duo_ui.py` (tkinter wrapper over the new CLI)
