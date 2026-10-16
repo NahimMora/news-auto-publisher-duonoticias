@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Dict, List
 
+from extractors.holasalta.extractor import HolaSaltaExtractor
 from extractors.news.ariesonline import AriesOnlineExtractor
 from extractors.news.eloncesalta import ElonceSaltaExtractor
 from extractors.news.eltribuno import ElTribunoExtractor
@@ -54,6 +55,9 @@ class SourceRegistry:
             return []
         if source == "paparazzi":
             return PaparazziExtractor(self.settings).scan(max_items=resolved_max_items)
+        if source == "holasalta":
+            category = str((config or {}).get("category") or "salta")
+            return HolaSaltaExtractor(self.settings).scan(max_items=resolved_max_items, category=category)
         if source in _SPECIALIZED:
             return _SPECIALIZED[source](self.settings).scan(max_items=resolved_max_items)
         if config or source in {"tn", "infobae", "ambitofinanciero", "elonce", "minutouno", "noticiasargentinas"}:
@@ -62,6 +66,14 @@ class SourceRegistry:
 
     def scan_enabled(self, max_items: int | None = None) -> Dict[str, List[ExtractedContent]]:
         return {source: self.scan_source(source, max_items=max_items) for source in self.enabled_source_names()}
+
+    def holasalta_video_urls(self, max_items: int | None = None) -> List[str]:
+        """X links queued in HolaSalta video jobs, if the source opts in."""
+        config = self._source_config("holasalta")
+        if not config or config.get("enabled") is False or not config.get("include_x_video_jobs"):
+            return []
+        limit = max_items if max_items is not None else int(config.get("max_x_video_jobs_per_scan") or 0) or None
+        return HolaSaltaExtractor(self.settings).video_urls(max_items=limit)
 
     def _resolve_max_items(self, config: Dict, max_items: int | None) -> int:
         if max_items is not None:

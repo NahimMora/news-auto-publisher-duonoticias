@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Tuple
@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 from dotenv import load_dotenv
 
 from storage.config_loader import load_yaml_config
+from utils.machine_guard import is_production_machine
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -180,6 +181,17 @@ class PipelineSettings:
     editorial_policy: dict
     webapp_holasalta_path: Path | None
     debug: bool
+    # HolaSalta source (read-only API: login + GET)
+    hs_api_url: str = "http://127.0.0.1:8000"
+    hs_api_username: str = "admin"
+    hs_api_password: str = field(default="", repr=False)
+    # Duo web delivery: "disabled" | "ingest" (docs/INGEST_CONTRACT.md) | "admin" (DUO_API.md)
+    enable_duo_web: bool = False
+    duo_web_mode: str = "disabled"
+    duo_web_url: str = ""
+    duo_web_token: str = field(default="", repr=False)
+    duo_web_default_category: str = "world"
+    production_machine: bool = False
 
 
 @lru_cache(maxsize=1)
@@ -235,6 +247,16 @@ def get_settings() -> PipelineSettings:
         for normalized in [_normalize_x_source(source)]
         if normalized
     )
+    duo_web_mode = (os.getenv("DUO_WEB_MODE") or "disabled").strip().lower()
+    if duo_web_mode not in {"disabled", "ingest", "admin"}:
+        duo_web_mode = "disabled"
+    # Each mode falls back to the variables its original project already used.
+    if duo_web_mode == "admin":
+        duo_web_url = os.getenv("DUO_WEB_URL") or os.getenv("DUO_BASE_URL", "")
+        duo_web_token = os.getenv("DUO_WEB_TOKEN") or os.getenv("DUO_ADMIN_KEY", "")
+    else:
+        duo_web_url = os.getenv("DUO_WEB_URL") or os.getenv("DUO_API_URL", "")
+        duo_web_token = os.getenv("DUO_WEB_TOKEN") or os.getenv("DUO_API_TOKEN", "")
     return PipelineSettings(
         base_dir=BASE_DIR,
         data_dir=data_dir,
@@ -318,7 +340,8 @@ def get_settings() -> PipelineSettings:
         enable_facebook=_get_bool("ENABLE_FACEBOOK", True),
         enable_comment_engagement=_get_bool("ENABLE_COMMENT_ENGAGEMENT", False),
         enable_auto_tuning=_get_bool("ENABLE_AUTO_TUNING", False),
-        live_publish_enabled=_get_bool("DUO_LIVE_PUBLISH_ENABLED", False),
+        # Live publishing needs the explicit flag AND the production PC (see CLAUDE.md).
+        live_publish_enabled=_get_bool("DUO_LIVE_PUBLISH_ENABLED", False) and is_production_machine(),
         safe_mode_default=_get_bool("DUO_SAFE_MODE_DEFAULT", True),
         meta_permissions=_get_str_tuple(
             "META_PERMISSIONS",
@@ -340,4 +363,13 @@ def get_settings() -> PipelineSettings:
         editorial_policy=editorial_policy,
         webapp_holasalta_path=Path(os.getenv("WEBAPP_HOLASALTA_PATH")) if os.getenv("WEBAPP_HOLASALTA_PATH") else None,
         debug=_get_bool("DUO_DEBUG", False),
+        hs_api_url=(os.getenv("HS_API_URL") or "http://127.0.0.1:8000").strip().rstrip("/"),
+        hs_api_username=(os.getenv("HS_API_USERNAME") or "admin").strip(),
+        hs_api_password=os.getenv("HS_API_PASSWORD", "").strip(),
+        enable_duo_web=_get_bool("ENABLE_DUO_WEB", False),
+        duo_web_mode=duo_web_mode,
+        duo_web_url=duo_web_url.strip().rstrip("/"),
+        duo_web_token=duo_web_token.strip(),
+        duo_web_default_category=(os.getenv("DUO_WEB_DEFAULT_CATEGORY") or "world").strip(),
+        production_machine=is_production_machine(),
     )

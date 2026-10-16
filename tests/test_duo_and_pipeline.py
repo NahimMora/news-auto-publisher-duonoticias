@@ -86,3 +86,11 @@ def test_publisher_marks_4xx_failed_and_keeps_5xx_for_retry(tmp_path):
         saved = store.get(item.key)
         assert saved["status"] == expected
         assert saved["attempts"] == 1
+
+
+def test_news_without_titulo_sends_empty_title_not_none():
+    import json
+    from duonoticias_autopublicador.duo_client import build_payload
+
+    row = {"raw_json": json.dumps({"url": "https://e/1"}), "processed_json": "{}", "kind": "news", "key": "k"}
+    assert build_payload(row)["title"] == ""

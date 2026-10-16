@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import os
-import socket
 from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
+
+from utils.machine_guard import assert_production_machine
 
 
 def _read_dotenv(path: Path) -> dict[str, str]:
@@ -71,12 +72,8 @@ class Settings(BaseModel):
         return cls.model_validate(kwargs)
 
     def assert_safe_machine(self, effective_dry_run: bool = False) -> None:
-        computer = os.environ.get("COMPUTERNAME") or socket.gethostname()
-        if computer.upper() != "FERNANDO" and not effective_dry_run:
-            raise RuntimeError(
-                f"Modo real bloqueado en {computer!r}; solo se permite en la PC FERNANDO. "
-                "Use --dry-run o --verify."
-            )
+        if not effective_dry_run:
+            assert_production_machine()
 
 
 _ENV_MAP = {

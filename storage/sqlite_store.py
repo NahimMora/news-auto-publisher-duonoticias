@@ -571,6 +571,16 @@ class PipelineStore:
             ).fetchone()
         return dict(row) if row else None
 
+    def has_source_item(self, source: str, source_item_id: str) -> bool:
+        if not source_item_id:
+            return False
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM content_items WHERE source = ? AND source_item_id = ? LIMIT 1",
+                (source, source_item_id),
+            ).fetchone()
+        return row is not None
+
     def recent_hash_candidates(self, source_type: str, limit: int = 200) -> List[Dict[str, Any]]:
         return self._rows(
             """

@@ -4,20 +4,28 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "duonoticias-autopublicador"
-version = "0.1.0"
+version = "0.2.0"
 requires-python = ">=3.10"
-dependencies = [
-  "httpx>=0.25,<1",
-  "pydantic>=2.5,<3",
-]
+# Single source of truth for runtime dependencies: requirements.txt
+dynamic = ["dependencies"]
 
 [project.optional-dependencies]
 test = ["pytest>=7.4,<9"]
 
 [project.scripts]
+duo = "cli.main:main"
 duonoticias-autopublicador = "duonoticias_autopublicador.main:cli"
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+[tool.setuptools.packages.find]
+include = [
+  "analytics*", "cli*", "duonoticias_autopublicador*", "editorial*", "extractors*",
+  "formatter*", "growth*", "jobs*", "publishers*", "scoring*", "scrapping*",
+  "storage*", "utils*",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
-

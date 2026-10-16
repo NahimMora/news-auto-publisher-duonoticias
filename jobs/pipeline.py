@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 from analytics.service import AnalyticsCollector
 from editorial.service import EditorialAI
+from extractors.holasalta.keys import tweet_id_from_url
 from extractors.registry import SourceRegistry
 from extractors.x.service import XExtractionService
 from formatter.service import AssetFormatter
@@ -20,6 +21,7 @@ from growth.validation import ScoreValidationService
 from jobs.content_policy import ContentPolicy, normalize_title_fingerprint
 from jobs.salta_priority import is_salta_source
 from jobs.scheduler import PeakScheduler
+from publishers.duo_web import DUO_WEB_PLATFORM, build_duo_web_publisher
 from publishers.meta_api import MetaGraphPublisher
 from scoring.virality import ViralityScorer
 from storage.media_hash import hamming_distance
@@ -38,6 +40,7 @@ class DuoPipeline:
         self.editorial = EditorialAI(self.settings)
         self.formatter = AssetFormatter(self.settings)
         self.publisher = MetaGraphPublisher(self.settings)
+        self.duo_web = build_duo_web_publisher(self.settings)
         self.analytics = AnalyticsCollector(self.store, self.publisher, self.settings)
         self.growth = GrowthFeedbackService(self.store, self.settings)
         self.source_ranking = SourceRankingService(self.store, self.settings)
@@ -80,7 +83,7 @@ class DuoPipeline:
             "safe_mode": safe_mode,
             "publish_cap": self._resolve_publish_cap(max_posts=max_posts, safe_mode=safe_mode),
         }
-        summary["ingested"] += self.run_scraper(max_news=max_news, x_handles=x_handles)
+        summary["ingested"] += self.run_scraper(max_news=max_news, x_handles=x_handles, dry_run=dry_run)
         if not dry_run:
             recovery = self.recover_failed_queue()
             summary["recovered_failed"] += int(recovery.get("reset") or 0)
@@ -120,6 +123,7 @@ class DuoPipeline:
         *,
         max_news: int | None = None,
         x_handles: Sequence[str] | None = None,
+        dry_run: bool = False,
     ) -> int:
         if max_news == 0:
             return 0
@@ -131,6 +135,8 @@ class DuoPipeline:
                 self.logger.exception("News extractor failed for %s: %s", source, exc)
                 continue
             ingested += self._ingest_rows(rows)
+
+        ingested += self._import_holasalta_x_jobs(max_items=max_news, dry_run=dry_run)
 
         if self.settings.x_mode != "manual":
             handles = list(x_handles or self.source_ranking.prioritize_handles(self.settings.x_sources))
@@ -147,6 +153,24 @@ class DuoPipeline:
 
     def scan_source(self, source: str, *, max_items: int | None = None) -> int:
         return self._ingest_rows(self.source_registry.scan_source(source, max_items=max_items))
+
+    def _import_holasalta_x_jobs(self, *, max_items: int | None = None, dry_run: bool = False) -> int:
+        """Route X links queued in HolaSalta through the regular X import flow."""
+        try:
+            urls = self.source_registry.holasalta_video_urls(max_items=max_items)
+        except Exception as exc:
+            self.logger.exception("HolaSalta video jobs failed: %s", exc)
+            return 0
+        imported = 0
+        for url in urls:
+            if self.store.has_source_item("x", tweet_id_from_url(url)):
+                continue
+            try:
+                self.import_x_url(url, dry_run=dry_run)
+                imported += 1
+            except Exception as exc:
+                self.logger.warning("HolaSalta X job import failed for %s: %s", url, exc)
+        return imported
 
     def import_x_url(self, url: str, *, dry_run: bool = False) -> str:
         content = self.x_extractor.import_url(url, dry_run=dry_run)
@@ -548,6 +572,8 @@ class DuoPipeline:
             platforms.append("instagram")
         if self.settings.enable_facebook:
             platforms.append("facebook")
+        if self.settings.enable_duo_web and self.duo_web is not None:
+            platforms.append(DUO_WEB_PLATFORM)
         return platforms
 
     @staticmethod
@@ -557,6 +583,8 @@ class DuoPipeline:
             return ["instagram"]
         if value == "facebook":
             return ["facebook"]
+        if value == DUO_WEB_PLATFORM:
+            return [DUO_WEB_PLATFORM]
         return ["instagram", "facebook"]
 
     def _publish_platform_records(
@@ -578,6 +606,9 @@ class DuoPipeline:
                         records.append(self.publisher.publish_instagram(package, scheduled_for=scheduled_for))
                     elif platform == "facebook":
                         records.append(self.publisher.publish_facebook(package, scheduled_for=scheduled_for))
+                    elif platform == DUO_WEB_PLATFORM and self.duo_web is not None:
+                        row = self.store.find_content(package.content_key) or {}
+                        records.append(self.duo_web.publish(package, row=row, scheduled_for=scheduled_for))
                 except Exception as platform_exc:
                     self.logger.warning("Platform %s publish error: %s", platform, platform_exc)
                     records.append(

@@ -9,7 +9,11 @@ Legacy entrypoints are deprecated:
 - `utils/political_agent.py` and `ideologia_politica.md` are legacy/reference only and are not used by the new pipeline.
 - `D:\WebApp_HolaSalta` is optional read-only reference through `WEBAPP_HOLASALTA_PATH`; production does not depend on subprocess calls to that project.
 
-Separate runtime (pending unification): `python -m duonoticias_autopublicador.main` is the HolaSalta → DuoNoticias bridge. It reads HolaSalta news and X video jobs over its API (login + GET only), keeps its own SQLite outbox (`state/state.db`) and delivers to `POST /api/ingest/articles` as described in `docs/INGEST_CONTRACT.md`.
+HolaSalta → DuoNoticias:
+- Source: `extractors/holasalta/` is the `holasalta` entry in `config/sources.yaml` (disabled by default). News from `GET /api/news/` go through the full pipeline like any extractor; with `include_x_video_jobs: true`, X links from `GET /api/x-video/jobs` are imported through the regular X manual import (skipping tweets already in `content_items`).
+- Delivery: `publishers/duo_web.py` is the `duo_web` publish platform (`ENABLE_DUO_WEB=true`). `DUO_WEB_MODE=ingest` posts the v1 contract in `docs/INGEST_CONTRACT.md`; `DUO_WEB_MODE=admin` posts to the existing `POST /api/admin/articles` (`DUO_API.md`) with a deterministic slug so resends collide (409 = already delivered). v1 sends text only, no cover image upload.
+- Production guard: `utils/machine_guard.py`. `live_publish_enabled` is true only with `DUO_LIVE_PUBLISH_ENABLED=true` on `COMPUTERNAME=FERNANDO`.
+- Deprecated standalone bridge: `python -m duonoticias_autopublicador.main` still works with its own outbox (`state/state.db`) and reuses the moved client/transport. Do not run it together with `duo_web` in `ingest` mode against the same web: both use different idempotency keys for the same item.
 
 ## Flow
 

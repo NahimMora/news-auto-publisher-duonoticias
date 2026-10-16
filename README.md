@@ -1,5 +1,7 @@
 # AutoPublicador DuoNoticias
 
+> **Estado:** este repo ahora contiene el pipeline completo (`python -m cli.main`, ver `AGENTS.md` y `docs/ARCHITECTURE.md`). HolaSalta es una fuente mas del pipeline (`extractors/holasalta/`) y la entrega a la web es la plataforma `duo_web` (`publishers/duo_web.py`). Lo que sigue describe el **puente standalone** `duonoticias_autopublicador/`, que se mantiene como deprecado durante la transicion. `pip install -e ".[test]"` instala ahora las dependencias de `requirements.txt` completas.
+
 Backend Python que lee noticias y links de videos de X desde HolaSalta, los guarda en SQLite, pasa cada item por un procesador extensible y los entrega mediante una outbox HTTP a DuoNoticias. El procesador actual es deliberadamente `passthrough`: no agrega ni inventa contenido.
 
 ## Instalacion

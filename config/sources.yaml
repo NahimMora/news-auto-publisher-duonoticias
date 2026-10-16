@@ -92,6 +92,21 @@ sources:
     parser: html_scraper
     max_items_per_scan: 10
 
+  # --- HOLASALTA (API propia, solo lectura: login + GET) ---
+  # Deshabilitada hasta la prueba controlada en FERNANDO (DUO-TASK-0006).
+  # Credenciales: HS_API_URL / HS_API_USERNAME / HS_API_PASSWORD en .env.
+  - name: holasalta
+    enabled: false
+    type: local_news
+    scan_interval_minutes: 40
+    priority: 97
+    category: salta
+    base_url: http://127.0.0.1:8000
+    parser: holasalta_api
+    max_items_per_scan: 12
+    include_x_video_jobs: true
+    max_x_video_jobs_per_scan: 8
+
   # --- SALTA POLICIAL / JUDICIAL ---
   - name: fiscalespenalesalta
     enabled: true

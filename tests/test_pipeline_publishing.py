@@ -85,6 +85,7 @@ class PipelinePublishingTests(unittest.TestCase):
                 {
                     "DUO_DB_PATH": str(db_path),
                     "DUO_LIVE_PUBLISH_ENABLED": "1",
+                    "COMPUTERNAME": "FERNANDO",
                     "DUO_SAFE_MODE_DEFAULT": "0",
                     "ENABLE_INSTAGRAM": "1",
                     "ENABLE_FACEBOOK": "1",
@@ -142,6 +143,7 @@ class PipelinePublishingTests(unittest.TestCase):
                 {
                     "DUO_DB_PATH": str(db_path),
                     "DUO_LIVE_PUBLISH_ENABLED": "1",
+                    "COMPUTERNAME": "FERNANDO",
                     "DUO_SAFE_MODE_DEFAULT": "0",
                     "ENABLE_INSTAGRAM": "1",
                     "ENABLE_FACEBOOK": "1",
@@ -207,6 +209,7 @@ class PipelinePublishingTests(unittest.TestCase):
                 {
                     "DUO_DB_PATH": str(db_path),
                     "DUO_LIVE_PUBLISH_ENABLED": "1",
+                    "COMPUTERNAME": "FERNANDO",
                     "DUO_SAFE_MODE_DEFAULT": "0",
                     "ENABLE_INSTAGRAM": "1",
                     "ENABLE_FACEBOOK": "1",
@@ -271,6 +274,7 @@ class PipelinePublishingTests(unittest.TestCase):
                 {
                     "DUO_DB_PATH": str(db_path),
                     "DUO_LIVE_PUBLISH_ENABLED": "1",
+                    "COMPUTERNAME": "FERNANDO",
                     "DUO_SAFE_MODE_DEFAULT": "0",
                     "ENABLE_INSTAGRAM": "1",
                     "ENABLE_FACEBOOK": "1",
@@ -337,6 +341,7 @@ class PipelinePublishingTests(unittest.TestCase):
                 {
                     "DUO_DB_PATH": str(db_path),
                     "DUO_LIVE_PUBLISH_ENABLED": "1",
+                    "COMPUTERNAME": "FERNANDO",
                     "ENABLE_INSTAGRAM": "1",
                     "ENABLE_FACEBOOK": "1",
                 },
@@ -388,6 +393,7 @@ class PipelinePublishingTests(unittest.TestCase):
                 {
                     "DUO_DB_PATH": str(db_path),
                     "DUO_LIVE_PUBLISH_ENABLED": "1",
+                    "COMPUTERNAME": "FERNANDO",
                     "ENABLE_INSTAGRAM": "1",
                     "ENABLE_FACEBOOK": "1",
                 },
@@ -633,6 +639,7 @@ class PipelinePublishingTests(unittest.TestCase):
                 {
                     "DUO_DB_PATH": str(db_path),
                     "DUO_LIVE_PUBLISH_ENABLED": "1",
+                    "COMPUTERNAME": "FERNANDO",
                     "ENABLE_INSTAGRAM": "1",
                     "ENABLE_FACEBOOK": "1",
                 },
