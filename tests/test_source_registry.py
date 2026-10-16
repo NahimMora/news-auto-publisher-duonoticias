@@ -15,17 +15,25 @@ class SourceRegistryTests(unittest.TestCase):
         get_settings.cache_clear()
 
     def test_scan_source_uses_configured_max_items_when_not_provided(self) -> None:
-        with patch.dict(
-            os.environ,
-            {
-                "DUO_SCRAPE_DEFAULT_MAX_ITEMS_PER_SOURCE": "10",
-            },
-            clear=False,
-        ):
-            get_settings.cache_clear()
-            registry = SourceRegistry(get_settings())
-            with patch("extractors.registry.RssHtmlNewsExtractor.scan", return_value=[]) as mocked:
-                registry.scan_source("tn")
+        # Isolated config: the real sources.yaml sets its own max_items_per_scan per source.
+        with tempfile.TemporaryDirectory(prefix="duo_sources_") as tmp_dir:
+            config_path = Path(tmp_dir) / "sources.yaml"
+            config_path.write_text(
+                "sources:\n  - name: tn\n    enabled: true\n    parser: rss_html\n    base_url: https://tn.com.ar\n",
+                encoding="utf-8",
+            )
+            with patch.dict(
+                os.environ,
+                {
+                    "DUO_SCRAPE_DEFAULT_MAX_ITEMS_PER_SOURCE": "10",
+                    "DUO_SOURCES_CONFIG": str(config_path),
+                },
+                clear=False,
+            ):
+                get_settings.cache_clear()
+                registry = SourceRegistry(get_settings())
+                with patch("extractors.registry.RssHtmlNewsExtractor.scan", return_value=[]) as mocked:
+                    registry.scan_source("tn")
 
         self.assertEqual(mocked.call_args.kwargs["max_items"], 10)
 

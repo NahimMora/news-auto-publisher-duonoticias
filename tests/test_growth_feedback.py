@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -11,6 +12,11 @@ from growth.validation import ScoreValidationService
 from storage.models import PublicationRecord
 from storage.settings import get_settings
 from storage.sqlite_store import PipelineStore
+
+
+# Relative dates: validation only looks back lookback_days from now.
+PUBLISHED_AT = (datetime.now(timezone.utc) - timedelta(days=2)).replace(microsecond=0).isoformat()
+COLLECTED_AT = (datetime.now(timezone.utc) - timedelta(days=1)).replace(microsecond=0).isoformat()
 
 
 class GrowthFeedbackTests(unittest.TestCase):
@@ -30,7 +36,7 @@ class GrowthFeedbackTests(unittest.TestCase):
                         "summary": "Resumen",
                         "body_text": "Texto",
                         "media_type": "video",
-                        "updated_at": "2026-04-05T00:00:00+00:00",
+                        "updated_at": PUBLISHED_AT,
                     },
                     {
                         "content_key": "fracaso",
@@ -41,7 +47,7 @@ class GrowthFeedbackTests(unittest.TestCase):
                         "summary": "Resumen",
                         "body_text": "Texto",
                         "media_type": "image",
-                        "updated_at": "2026-04-05T00:00:00+00:00",
+                        "updated_at": PUBLISHED_AT,
                     },
                 ]
                 with store.connection() as conn:
@@ -79,14 +85,16 @@ class GrowthFeedbackTests(unittest.TestCase):
                             INSERT INTO publications (
                                 content_key, platform, status, platform_media_id, platform_post_id,
                                 caption, post_type, published_at, created_at, updated_at
-                            ) VALUES (?, 'instagram', 'published', ?, ?, 'caption', ?, '2026-04-05T00:00:00+00:00',
-                                      '2026-04-05T00:00:00+00:00', '2026-04-05T00:00:00+00:00')
+                            ) VALUES (?, 'instagram', 'published', ?, ?, 'caption', ?, ?, ?, ?)
                             """,
                             (
                                 row["content_key"],
                                 row["content_key"],
                                 row["content_key"],
                                 "reel" if row["content_key"] == "elite" else "image",
+                                PUBLISHED_AT,
+                                PUBLISHED_AT,
+                                PUBLISHED_AT,
                             ),
                         )
                     pub_rows = conn.execute("SELECT id, content_key FROM publications").fetchall()
@@ -103,9 +111,9 @@ class GrowthFeedbackTests(unittest.TestCase):
                                 publication_id, checkpoint_label, checkpoint_order, collected_at,
                                 views, likes, comments, shares, engagement_rate, performance_score,
                                 performance_bucket, metrics_json
-                            ) VALUES (?, 'T3', 3, '2026-04-06T00:00:00+00:00', 0, 0, 0, 0, 0, ?, ?, '{}')
+                            ) VALUES (?, 'T3', 3, ?, 0, 0, 0, 0, 0, ?, ?, '{}')
                             """,
-                            (pub["id"], perf, bucket),
+                            (pub["id"], COLLECTED_AT, perf, bucket),
                         )
                 feedback = GrowthFeedbackService(store).build_feedback_summary()
                 self.assertIn("CONTENIDO QUE FUNCIONA:", feedback)

@@ -8,7 +8,7 @@ from editorial.prompting import build_editorial_user_prompt, is_x_editorial_row,
 class EditorialPromptingTests(unittest.TestCase):
     def test_uses_central_policy_prompts_per_source(self) -> None:
         paparazzi_prompt = load_master_prompt(row={"source": "paparazzi"})
-        self.assertIn("seleccionar solo notas con potencial real", paparazzi_prompt)
+        self.assertIn("Solo publica notas con potencial real", paparazzi_prompt)
         self.assertIn("POLITICA EDITORIAL CONFIGURABLE", paparazzi_prompt)
 
         x_prompt = load_master_prompt(row={"source": "x"})
@@ -19,8 +19,8 @@ class EditorialPromptingTests(unittest.TestCase):
         self.assertIn("reels y clips virales detectados en X", x_manual_prompt)
 
         news_prompt = load_master_prompt(row={"source": "tn"})
-        self.assertIn("4 a 6 parrafos cortos", news_prompt)
-        self.assertIn("2 a 4 emojis", news_prompt)
+        self.assertIn("Por que importa:", news_prompt)
+        self.assertIn("3 a 5 emojis", news_prompt)
 
     def test_user_prompt_keeps_content_and_feedback(self) -> None:
         row = {

@@ -14,6 +14,48 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+_TIMESTAMP_FIELDS = ("created_ts", "created_at", "published_at", "fecha_publicacion", "fecha", "updated_at")
+
+
+def _timestamp(raw: dict[str, Any]) -> float | None:
+    for field in _TIMESTAMP_FIELDS:
+        value = raw.get(field)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+        if isinstance(value, str) and value.strip():
+            try:
+                parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.timestamp()
+    return None
+
+
+def newest_keys(items: Sequence[DiscoveredItem], last_n: int) -> set[str]:
+    """Keys of the ``last_n`` most recent items of each kind.
+
+    Sorts by timestamp when every item of a kind has one (HolaSalta video jobs
+    carry ``created_ts``). Otherwise keeps API order, where the newest item is
+    last: HolaSalta appends new scrapes at the end of its news file.
+    """
+    if last_n <= 0:
+        return set()
+    by_kind: dict[str, list[DiscoveredItem]] = {}
+    for item in items:
+        by_kind.setdefault(item.kind, []).append(item)
+    keys: set[str] = set()
+    for group in by_kind.values():
+        stamps = [_timestamp(item.raw) for item in group]
+        if all(stamp is not None for stamp in stamps):
+            ordered = [item for _, _, item in sorted(zip(stamps, range(len(group)), group))]
+        else:
+            ordered = group
+        keys.update(item.key for item in ordered[-last_n:])
+    return keys
+
+
 class StateStore:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
@@ -66,14 +108,18 @@ class StateStore:
         last_n: int = 10,
     ) -> dict[str, int]:
         initial = not self.is_initialized()
+        counts = {"new": 0, "changed_sent": 0, "unchanged": 0}
+        if initial and not items:
+            # An empty first pass (HolaSalta down or still empty) must not close the
+            # initial sync; otherwise the whole backlog would be published next pass.
+            return counts
         pending_keys: set[str] = set()
         if initial:
             if initial_mode == "process_all":
                 pending_keys = {item.key for item in items}
-            elif initial_mode == "last_n" and last_n:
-                pending_keys = {item.key for item in items[-last_n:]}
+            elif initial_mode == "last_n":
+                pending_keys = newest_keys(items, last_n)
 
-        counts = {"new": 0, "changed_sent": 0, "unchanged": 0}
         now = utc_now()
         with self.transaction() as conn:
             for item in items:
