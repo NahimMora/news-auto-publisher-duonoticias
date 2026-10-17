@@ -673,6 +673,13 @@ def _preflight(pipeline: DuoPipeline) -> dict[str, Any]:
             warnings.append(f"{Path(binary).name}_missing")
     if _internet_check() != "ok":
         warnings.append("internet_unavailable")
+    # Motor audiovisual: si falta, el formateador legado produce las piezas (no bloquea).
+    motion = pipeline.formatter.motion
+    motion_state = "ready" if motion.enabled else ("disabled" if not motion.config.enabled else "unavailable_legacy_fallback")
+    if motion_state == "unavailable_legacy_fallback":
+        warnings.append("motion_engine_unavailable_legacy_fallback")
+    for platform, entry in pipeline.rate_limits.snapshot().items():
+        warnings.append(f"{platform}_rate_limited_until_{entry.get('until', '')}")
 
     return {
         "ok": not critical,
@@ -683,6 +690,7 @@ def _preflight(pipeline: DuoPipeline) -> dict[str, Any]:
         "sources": sources,
         "platforms": platforms,
         "llm": {"provider": settings.llm.provider, "model": settings.llm.model},
+        "motion_engine": motion_state,
     }
 
 

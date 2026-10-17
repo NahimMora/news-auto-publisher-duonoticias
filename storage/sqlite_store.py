@@ -1039,6 +1039,80 @@ class PipelineStore:
             )
             return int(row["id"]) if row else 0
 
+    # -- idempotencia de publicacion ------------------------------------
+    # Antes de llamar a Meta la plataforma queda "in_flight". Si el proceso cae
+    # entre la publicacion real y el guardado, el siguiente ciclo NO reintenta:
+    # reconcilia por evidencia (caption exacto en la cuenta) o marca "ambiguous".
+
+    def mark_publication_in_flight(self, content_key: str, platform: str, caption: str, post_type: str) -> None:
+        now = utc_now_iso()
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO publications (content_key, platform, status, caption, post_type, mode, dry_run, created_at, updated_at)
+                VALUES (?, ?, 'in_flight', ?, ?, 'live', 0, ?, ?)
+                ON CONFLICT(content_key, platform) DO UPDATE SET
+                    status = CASE WHEN publications.status = 'published' THEN publications.status ELSE 'in_flight' END,
+                    caption = excluded.caption,
+                    post_type = excluded.post_type,
+                    updated_at = excluded.updated_at
+                """,
+                (content_key, platform, caption, post_type, now, now),
+            )
+
+    def list_in_flight_publications(self) -> List[Dict[str, Any]]:
+        return self._rows(
+            """
+            SELECT id, content_key, platform, caption, post_type, updated_at
+            FROM publications
+            WHERE status = 'in_flight'
+            ORDER BY updated_at ASC
+            """,
+            (),
+        )
+
+    def resolve_publication(
+        self,
+        content_key: str,
+        platform: str,
+        *,
+        status: str,
+        media_id: str = "",
+        permalink: str = "",
+        error_message: str = "",
+    ) -> None:
+        now = utc_now_iso()
+        with self.connection() as conn:
+            conn.execute(
+                """
+                UPDATE publications
+                SET status = ?,
+                    platform_media_id = COALESCE(NULLIF(?, ''), platform_media_id),
+                    platform_post_id = COALESCE(NULLIF(?, ''), platform_post_id),
+                    permalink = COALESCE(NULLIF(?, ''), permalink),
+                    published_at = CASE WHEN ? = 'published' THEN COALESCE(published_at, ?) ELSE published_at END,
+                    error_message = ?,
+                    updated_at = ?
+                WHERE content_key = ? AND platform = ?
+                """,
+                (status, media_id, media_id, permalink, status, now, error_message, now, content_key, platform),
+            )
+
+    def defer_publish(self, content_key: str, reason: str) -> None:
+        """Vuelve a la cola sin consumir reintentos (limite de tasa de la plataforma)."""
+        with self.connection() as conn:
+            conn.execute(
+                """
+                UPDATE content_items
+                SET pipeline_status = 'scheduled',
+                    last_error = ?,
+                    errors = ?,
+                    updated_at = ?
+                WHERE content_key = ? AND pipeline_status != 'published'
+                """,
+                (reason, reason, utc_now_iso(), content_key),
+            )
+
     def publication_statuses(self, content_key: str) -> Dict[str, Dict[str, Any]]:
         rows = self._rows(
             """
@@ -1873,6 +1947,13 @@ class PipelineStore:
         row = self.find_content(content_key)
         if not row:
             return False
+        # Un reintento manual habilita de nuevo las plataformas ambiguas/en vuelo
+        # (el operador ya verifico en Meta que no se publicaron).
+        with self.connection() as conn:
+            conn.execute(
+                "UPDATE publications SET status = 'failed', updated_at = ? WHERE content_key = ? AND status IN ('ambiguous', 'in_flight')",
+                (utc_now_iso(), content_key),
+            )
         reset_score = str(row.get("pipeline_status") or "") in {"filtered", "score_failed"}
         if reset_score:
             target = "extracted"

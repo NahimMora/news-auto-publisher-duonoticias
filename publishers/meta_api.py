@@ -185,6 +185,46 @@ class MetaGraphPublisher:
                     package.meta["defer_cleanup"] = previous_defer
             self._maybe_cleanup_package_assets(package)
 
+    def find_recent_publication(self, platform: str, caption: str) -> Dict[str, Any] | None:
+        """Busca en la cuenta una publicacion reciente con este caption exacto.
+
+        Devuelve {"id", "permalink"} si existe, {} si se verifico que no existe y
+        lanza excepcion si no se pudo verificar (queda "ambiguous").
+        """
+        wanted = _caption_key(caption)
+        if not wanted:
+            return None
+        if platform == "instagram":
+            if not (self.settings.ig_access_token and self.settings.ig_user_id):
+                raise RuntimeError("sin credenciales de Instagram para reconciliar")
+            payload = self._request(
+                "GET",
+                f"/{self.settings.ig_user_id}/media",
+                params={"fields": "id,caption,permalink,timestamp", "limit": 30},
+                access_token=self.settings.ig_access_token,
+            )
+            for item in payload.get("data") or []:
+                if _caption_key(item.get("caption")) == wanted:
+                    return {"id": str(item.get("id") or ""), "permalink": str(item.get("permalink") or "")}
+            return {}
+        if platform == "facebook":
+            page_id = self._get_fb_page_id() or self.settings.fb_page_id
+            token = self._get_fb_publish_token()
+            if not (page_id and token):
+                raise RuntimeError("sin credenciales de Facebook para reconciliar")
+            for edge, field in (("published_posts", "message"), ("videos", "description")):
+                payload = self._request(
+                    "GET",
+                    f"/{page_id}/{edge}",
+                    params={"fields": f"id,{field},permalink_url,created_time", "limit": 30},
+                    access_token=token,
+                )
+                for item in payload.get("data") or []:
+                    if _caption_key(item.get(field)) == wanted:
+                        return {"id": str(item.get("id") or ""), "permalink": str(item.get("permalink_url") or "")}
+            return {}
+        raise RuntimeError(f"reconciliacion no soportada para {platform}")
+
     def get_ig_publish_limit(self) -> Dict[str, Any]:
         if not (self.settings.ig_access_token and self.settings.ig_user_id):
             return {}
@@ -1009,3 +1049,9 @@ class MetaGraphPublisher:
         from datetime import datetime, timezone
 
         return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _caption_key(value: object) -> str:
+    """Primeros 160 caracteres normalizados: evidencia fuerte (caption generado unico)."""
+    text = " ".join(str(value or "").split()).strip().lower()
+    return text[:160]

@@ -30,6 +30,10 @@ pytest
 
 El modo que puede enviar esta bloqueado por codigo salvo que `COMPUTERNAME=FERNANDO`. No se exponen puertos. El servidor de `tools/mock_duo_server.py` es solo para desarrollo y rechaza escuchar fuera de loopback.
 
+## Motor audiovisual
+
+Todas las piezas que publica el pipeline (posts, carruseles y reels) salen del motor **Dúo Motion** (`motion/`: Remotion + panel Next.js). Instalación, plantillas, branding y exportación: [motion/README.md](motion/README.md).
+
 ## Servicio 24/7
 
 El servicio de produccion es el pipeline, no este puente: tarea `DuoNoticias-24x7` registrada con `scripts\register_scheduled_task.ps1`, que corre `scripts\start_24x7_production.ps1` (preflight + `run-24-7 --live`). Ver [docs/OPERATIONS.md](docs/OPERATIONS.md). No registrar una tarea para el puente standalone: duplicaria envios a la web. El contrato propuesto para la web Node esta en [docs/INGEST_CONTRACT.md](docs/INGEST_CONTRACT.md).

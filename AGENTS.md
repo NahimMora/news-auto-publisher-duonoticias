@@ -10,14 +10,16 @@
 - **Queue**: `python -m cli.main queue --format table`
 - **Import X URL**: `python -m cli.main import-x-url --url "..."`
 - **Launch UI**: `python duo_ui.py` (tkinter wrapper over the new CLI)
-- **Install deps**: `pip install -r requirements.txt`
+- **Install deps**: `pip install -r requirements.txt` and `cd motion; npm install` (visual engine)
+- **Visual engine**: `cd motion; npm run studio | panel | render:demos | typecheck` (see motion/README.md)
 
 ## Architecture
 - **cli/main.py**: Single runtime entrypoint for SQLite 24/7 pipeline
 - **jobs/pipeline.py**: Scraper → Scoring → Editorial → Formatter → Scheduler → Publisher → Analytics → Growth
 - **extractors/**: Source registry, Paparazzi/TN/X extraction
 - **utils/**: Core modules (OpenAI captioner, image/video processing, Instagram Graph API publisher, FAISS dedup)
-- **video_app/**: Video overlay/subtitle engines for Instagram Reels (9:16)
+- **motion/**: Duo Motion visual engine (Remotion templates, hooks, animation library, Next.js editorial panel, render worker). `formatter/motion_engine.py` is the pipeline adapter; the legacy Pillow/ffmpeg formatter (`utils/image_processor.py`, `video_app/`) is the automatic fallback
+- **video_app/**: Legacy video overlay/subtitle engines (fallback only)
 - **data/**: JSON outputs, history, FAISS index, media files
 - External API: DUO_API.md documents the Next.js CMS REST API (admin/public endpoints)
 - Legacy scripts are deprecated wrappers/reference only; do not add new runtime work outside `cli/main.py`.

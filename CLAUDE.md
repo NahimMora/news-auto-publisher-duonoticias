@@ -14,6 +14,7 @@ El repo une dos proyectos (merge de `pipeline-completo` en `main`):
 - **Puente standalone** (`duonoticias_autopublicador/`, deprecado): `python -m duonoticias_autopublicador.main`; ver `README.md`. No agregar funcionalidad nueva ahi.
 - Servicio 24/7 en FERNANDO: tarea `DuoNoticias-24x7` (`scripts/register_scheduled_task.ps1` -> `scripts/start_24x7_production.ps1`, que corre `preflight` y despues `run-24-7 --live`). Ver `docs/OPERATIONS.md`.
 - El guard de produccion vive en `utils/machine_guard.py`; todo lo que publique o envie hacia afuera tiene que pasar por ahi.
+- Motor visual: `motion/` (Remotion + panel Next.js, ver `motion/README.md`). El pipeline lo usa via `formatter/motion_engine.py`, con fallback automatico al formateador legado. El panel solo escucha en 127.0.0.1. Las cifras y los puntos clave en pantalla solo pueden salir del texto de la nota.
 - Dependencias: `requirements.txt` es la unica fuente (`pyproject.toml` la lee). Tests: `python -m pytest` corre todo `tests/`.
 
 ## Segundo Cerebro (gestión de conocimiento personal)

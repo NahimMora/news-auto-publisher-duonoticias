@@ -81,6 +81,24 @@ Operational status:
 - `degraded`: the loop can run, but there are stale/retry-exhausted items or heartbeat/log issues.
 - `critical`: live publishing, credentials or SQLite are not ready.
 
+## Motor audiovisual (motion/)
+
+- Instalación: `cd motion; npm install`. El primer render descarga el Chrome headless de Remotion y arma el bundle (`motion/.cache/`).
+- Verificación: `python -m cli.main preflight` informa `motion_engine` como `ready`, `disabled` o `unavailable_legacy_fallback`. Cuando no está disponible, el pipeline sigue con el formateador legado y solo emite una advertencia.
+- Demos y prueba visual: `cd motion; npm run render:demos`. Los archivos quedan en `motion/out/demos/`.
+- Panel editorial (local, 127.0.0.1:3100): `cd motion; npm run panel`. Muestra las piezas generadas por el pipeline en "Bandeja del pipeline".
+
+## Publicación interrumpida y límites de Meta
+
+- **Si el proceso se corta mientras publica**, la plataforma queda `in_flight`. El próximo ciclo busca el caption exacto en la cuenta:
+  - si lo encuentra, la marca como publicada;
+  - si confirma que no está, la reencola;
+  - si no puede verificar, la marca `ambiguous`.
+- **Una plataforma `ambiguous` no se republica sola.** Revisá en Instagram/Facebook si el post salió:
+  - si salió, dejala como está u omití la pieza con `skip`;
+  - si no salió, corré `python -m cli.main retry --content-key "..."`.
+- **Límites de Meta:** el cupo de 24 h de Instagram, los códigos 4/9/17/32/613 o un HTTP 429 bloquean esa plataforma 30 minutos (180 si es el cupo diario). La pieza vuelve a `scheduled` sin perder reintentos. El estado está en `data\runtime\meta_rate_limits.json` y el preflight lo informa.
+
 ## Recovery
 
 Inspect:

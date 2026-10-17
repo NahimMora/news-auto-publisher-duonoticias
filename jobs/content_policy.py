@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -9,6 +10,7 @@ from email.utils import parsedate_to_datetime
 from typing import Any, Dict
 from zoneinfo import ZoneInfo
 
+from jobs.salta_priority import is_salta_source
 from scoring.virality import infer_theme
 from storage.models import ExtractedContent
 from storage.settings import PipelineSettings
@@ -109,6 +111,44 @@ PUBLIC_SAFETY_TERMS = {
     "consumidor",
 }
 
+# Lugares de Salta: una nota de cualquier fuente que ocurre en la provincia es
+# noticia local (deportes, comunidad, cultura, clima, educacion, transito...).
+SALTA_PLACE_TERMS = {
+    "salta",
+    "salteno",
+    "saltena",
+    "saltenos",
+    "saltenas",
+    "oran",
+    "tartagal",
+    "metan",
+    "cafayate",
+    "rosario de la frontera",
+    "rosario de lerma",
+    "general guemes",
+    "cerrillos",
+    "vaqueros",
+    "la caldera",
+    "chicoana",
+    "campo quijano",
+    "embarcacion",
+    "pichanal",
+    "coronel moldes",
+    "el carril",
+    "cachi",
+    "iruya",
+    "joaquin v. gonzalez",
+    "apolinario saravia",
+    "valle de lerma",
+    "valles calchaquies",
+    "san bernardo",
+    "aguaray",
+    "mosconi",
+    "colonia santa rosa",
+    "hipolito yrigoyen",
+    "las lajitas",
+}
+
 BLOCKED_LOW_VALUE_TERMS = {
     "horoscopo",
     "zodiaco",
@@ -152,6 +192,7 @@ class ContentPolicy:
     def __init__(self, settings: PipelineSettings) -> None:
         self.settings = settings
         self.zone = ZoneInfo(settings.timezone)
+        self.settings_accepts_local = os.getenv("DUO_POLICY_ACCEPT_SALTA_LOCAL", "1").strip().lower() not in {"0", "false", "no", "off"}
 
     def evaluate_content(self, content: ExtractedContent) -> ContentPolicyDecision:
         row = content.as_dict()
@@ -220,6 +261,9 @@ class ContentPolicy:
         tags = _normalize_for_match(self._tags_text(row))
         if source == "paparazzi" and (_has_any_term(lowered, ENTERTAINMENT_TERMS) or _has_any_term(tags, ENTERTAINMENT_TERMS)):
             return "espectaculos"
+        # Medio salteno: lo local entra por fuente salteña o por ocurrir en Salta.
+        if self.settings_accepts_local and (is_salta_source(source, self.settings) or _has_any_term(headline, SALTA_PLACE_TERMS)):
+            return "salta_local"
         return ""
 
     def _headline_text(self, row: Dict[str, Any]) -> str:

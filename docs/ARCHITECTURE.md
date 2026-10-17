@@ -22,11 +22,35 @@ HolaSalta → DuoNoticias:
 1. `run_scraper`: direct source registry scans enabled sources from `config/sources.yaml`.
 2. `run_scoring`: unified 0-100 scoring plus source-specific `source_scores`.
 3. `run_editorial`: centralized JSON prompts from `editorial/prompting.py` and `config/editorial_policy.yaml`.
-4. `run_formatter`: image/carousel/reel package creation. Dry-run uses no heavy media processing.
+4. `run_formatter`: image/carousel/reel package creation through the Duo Motion engine (`formatter/motion_engine.py` -> `motion/`), with automatic per-piece fallback to the legacy Pillow/ffmpeg formatter. Dry-run uses no heavy media processing.
 5. `run_scheduler`: slot assignment with anti-repetition.
 6. `run_publisher`: blocked unless `DUO_LIVE_PUBLISH_ENABLED=true` and CLI `--live`.
 7. `run_analytics`: Meta metrics where permissions allow.
 8. `run_comment_engagement`: disabled by default; requires explicit config and may require extra Meta permissions.
+
+## Duo Motion (visual engine)
+
+`motion/` is a Node project (Remotion + React + TypeScript, Next.js panel). See `motion/README.md`.
+
+- **Contract:** a piece is `content` (what the news says) + `presentation` (visual decisions), validated by Zod in `motion/src/schema/piece.ts`. `tests/test_motion_engine.py` validates Python-built pieces against that schema through `render/validate.ts`.
+- **Python side:** `formatter/motion_engine.py` builds the piece from the editorialized row:
+  - Gemini's `visual` block (`editorial/prompting.py` `VISUAL_RULES`) supplies the AV headline, category, location, urgency, key points and figures.
+  - Figures pass only if the number appears literally in the note; key points must share most of their words with it.
+- **Rendering:** a persistent `node render/cli.ts --stdio` worker per formatter stage (warm bundle and browser, no ports). `AssetFormatter.close()` ends it.
+- **Templates:** `breaking`, `editorial` and `data` (reels), and `static` (posts, carousels, stories). Hooks: typographic, photo, data, chosen automatically by content.
+- **Pipeline output:**
+  - videos -> reel (editorial; breaking if urgent);
+  - photos -> JPEG post or carousel;
+  - urgent or data-rich photo news -> animated reel (`DUO_MOTION_PHOTO_REELS`).
+
+## Publishing reliability
+
+- **Idempotency:** before each Meta call the platform row is `in_flight`. At the start of the next publish run, `_reconcile_in_flight` searches the account for the exact caption:
+  - found -> `published` with its id, never duplicated;
+  - verified absent -> back to the queue;
+  - unverifiable -> `ambiguous`, which needs `cli retry` after a manual check.
+- **Rate limits** (`publishers/rate_limits.py`): Meta limit errors set a shared `blocked_until` per platform in `data/runtime/meta_rate_limits.json`. The piece goes back to `scheduled` without consuming retries.
+- **Local-first policy:** `jobs/content_policy.py` accepts Salta news (Salta source or a Salta place in the headline) besides the national topics.
 
 ## Current Vertical Slice
 
