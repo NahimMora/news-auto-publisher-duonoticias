@@ -20,8 +20,29 @@ JSON_SCHEMA_HINT = """
   "safety_notes": "...",
   "claims_to_avoid": [],
   "source_attribution": "...",
-  "tone": "..."
+  "tone": "...",
+  "visual": {
+    "titular_audiovisual": "...",
+    "categoria": "...",
+    "ubicacion": "...",
+    "urgente": false,
+    "claves": ["..."],
+    "cifras": [{"valor": 0, "unidad": "", "prefijo": "", "etiqueta": "...", "comparar_con": null, "etiqueta_comparacion": ""}]
+  }
 }
+""".strip()
+
+
+# Reglas del bloque "visual": alimenta al motor audiovisual (motion/). El
+# formateador valida las cifras contra el texto y descarta lo que no figure.
+VISUAL_RULES = """
+BLOQUE "visual" (para el diseno audiovisual de la pieza):
+- titular_audiovisual: maximo 70 caracteres, mismo sentido que la nota, sin emojis ni hashtags. Podes marcar UNA palabra clave entre *asteriscos*.
+- categoria: exactamente una de policiales, justicia, politica, economia, sociedad, salud, educacion, deportes, cultura, espectaculos, turismo, clima, tecnologia, actualidad.
+- ubicacion: lugar principal del hecho tal como figura en la nota (ej. "Salta Capital", "Oran", "Cafayate"). Vacio si la nota no lo dice.
+- urgente: true solo si es un hecho de ultimo momento con impacto inmediato.
+- claves: hasta 3 datos concretos tomados literalmente de la nota (maximo 90 caracteres cada uno). Lista vacia si no hay.
+- cifras: SOLO numeros que aparecen escritos en la nota, con su etiqueta. Nunca calcules, redondees ni estimes. Lista vacia si no hay.
 """.strip()
 
 
@@ -192,7 +213,7 @@ def load_master_prompt(
     runtime = settings or get_settings()
     path = runtime.editorial_master_prompt_path
     if path and path.exists():
-        return path.read_text(encoding="utf-8").strip()
+        return f"{path.read_text(encoding='utf-8').strip()}\n\n{VISUAL_RULES}"
 
     source = str((row or {}).get("source") or "").lower().strip()
     category = str((row or {}).get("tags") or "").lower()
@@ -209,7 +230,7 @@ def load_master_prompt(
         base = LOCAL_NEWS_SYSTEM_PROMPT
     else:
         base = NEWS_SYSTEM_PROMPT
-    return f"{base}\n\nPOLITICA EDITORIAL CONFIGURABLE\n{policy}".strip()
+    return f"{base}\n\n{VISUAL_RULES}\n\nPOLITICA EDITORIAL CONFIGURABLE\n{policy}".strip()
 
 
 def build_editorial_user_prompt(

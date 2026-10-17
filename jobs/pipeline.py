@@ -23,6 +23,7 @@ from jobs.salta_priority import is_salta_source
 from jobs.scheduler import PeakScheduler
 from publishers.duo_web import DUO_WEB_PLATFORM, build_duo_web_publisher
 from publishers.meta_api import MetaGraphPublisher
+from publishers.rate_limits import RateLimitRegistry, is_rate_limit_error
 from scoring.virality import ViralityScorer
 from storage.media_hash import hamming_distance
 from storage.models import Asset, DedupDecision, FormattedPackage, PublicationRecord
@@ -39,6 +40,9 @@ class DuoPipeline:
         self.scorer = ViralityScorer(self.settings)
         self.editorial = EditorialAI(self.settings)
         self.formatter = AssetFormatter(self.settings)
+        self.rate_limits = RateLimitRegistry(
+            Path(os.getenv("DUO_RATE_LIMITS_PATH") or (self.settings.data_dir / "runtime" / "meta_rate_limits.json"))
+        )
         self.publisher = MetaGraphPublisher(self.settings)
         self.duo_web = build_duo_web_publisher(self.settings)
         self.analytics = AnalyticsCollector(self.store, self.publisher, self.settings)
@@ -209,13 +213,17 @@ class DuoPipeline:
 
     def run_formatter(self, *, limit: int | None = None, dry_run: bool = False) -> int:
         processed = 0
-        for row in self.store.list_pending_formatter(limit=limit or 20):
-            try:
-                package = self.formatter.format_row(row, dry_run=dry_run)
-                self.store.save_formatted(str(row["content_key"]), package)
-                processed += 1
-            except Exception as exc:
-                self.store.mark_status(str(row["content_key"]), "format_failed", str(exc))
+        try:
+            for row in self.store.list_pending_formatter(limit=limit or 20):
+                try:
+                    package = self.formatter.format_row(row, dry_run=dry_run)
+                    self.store.save_formatted(str(row["content_key"]), package)
+                    processed += 1
+                except Exception as exc:
+                    self.store.mark_status(str(row["content_key"]), "format_failed", str(exc))
+        finally:
+            # El worker de render (motion/) no queda vivo entre ciclos.
+            self.formatter.close()
         return processed
 
     def run_scheduler(self, *, limit: int | None = None) -> int:
@@ -331,6 +339,9 @@ class DuoPipeline:
         if fixed_slot_only and not active_slot:
             self.logger.info("No active publication slot; live publish deferred")
             return 0
+        reconciled = self._reconcile_in_flight()
+        if reconciled:
+            self.logger.info("Reconciled interrupted publications: %s", reconciled)
         skipped = self._skip_unpublishable_queue()
         if skipped:
             self.logger.info("Skipped %s unpublishable queue items", skipped)
@@ -373,28 +384,80 @@ class DuoPipeline:
                 package = self._formatted_from_row(row)
                 schedule = self._load_json(row.get("schedule_json"))
                 statuses = self.store.publication_statuses(content_key)
+                if any(str(statuses.get(p, {}).get("status") or "") == "ambiguous" for p in target_platforms):
+                    # Publicacion interrumpida sin evidencia: no se reintenta sola (evita duplicados).
+                    continue
                 pending_platforms = [
                     platform
                     for platform in target_platforms
-                    if str(statuses.get(platform, {}).get("status") or "") != "published"
+                    if str(statuses.get(platform, {}).get("status") or "") not in {"published", "in_flight"}
                 ]
                 if not pending_platforms:
                     self.store.refresh_content_publish_state(content_key, target_platforms)
                     published += 1
                     continue
+                blocked = [p for p in pending_platforms if self.rate_limits.blocked_until(p)]
+                pending_platforms = [p for p in pending_platforms if p not in blocked]
+                rate_limited: List[str] = []
                 for result in self._publish_platform_records(
                     package,
                     scheduled_for=str(schedule.get("scheduled_for") or ""),
                     platforms=pending_platforms,
                 ):
+                    if result.status != "published" and is_rate_limit_error(result.error_message):
+                        # Limite de Meta: no es una falla del contenido. Bloqueo compartido
+                        # y la pieza vuelve a la cola sin perder el turno.
+                        self.rate_limits.block(result.platform, result.error_message or "")
+                        rate_limited.append(result.platform)
+                        self.store.resolve_publication(content_key, result.platform, status="deferred", error_message=str(result.error_message or "")[:500])
+                        continue
                     self.store.save_publication(content_key, result)
                 self.store.refresh_content_publish_state(content_key, target_platforms)
+                if blocked or rate_limited:
+                    self.store.defer_publish(content_key, f"rate_limited_platforms={','.join(sorted(set(blocked + rate_limited)))}")
                 final_statuses = self.store.publication_statuses(content_key)
                 if all(str(final_statuses.get(platform, {}).get("status") or "") == "published" for platform in target_platforms):
                     published += 1
             except Exception as exc:
                 self.store.mark_status(content_key, "publish_failed", str(exc))
         return published
+
+    def _reconcile_in_flight(self) -> Dict[str, int]:
+        """Resuelve publicaciones que quedaron "en vuelo" por una caida.
+
+        - Caption encontrado en la cuenta -> published (con su id): sin duplicar.
+        - Verificado que no esta -> failed (se puede reintentar).
+        - No se pudo verificar -> ambiguous (requiere `retry` manual).
+        Solo corre al inicio de un ciclo de publicacion: el lock del supervisor
+        garantiza que no hay otro publicador activo.
+        """
+        summary = {"published": 0, "failed": 0, "ambiguous": 0}
+        finder = getattr(self.publisher, "find_recent_publication", None)
+        for row in self.store.list_in_flight_publications():
+            content_key = str(row.get("content_key") or "")
+            platform = str(row.get("platform") or "")
+            try:
+                if not callable(finder):
+                    raise RuntimeError("publicador sin reconciliacion")
+                found = finder(platform, str(row.get("caption") or ""))
+            except Exception as exc:
+                self.store.resolve_publication(content_key, platform, status="ambiguous", error_message=f"reconciliacion_pendiente: {exc}"[:500])
+                summary["ambiguous"] += 1
+                self.logger.warning("Publication %s/%s interrupted and unverifiable; manual retry required", content_key, platform)
+                continue
+            if found and found.get("id"):
+                self.store.resolve_publication(content_key, platform, status="published", media_id=found["id"], permalink=found.get("permalink", ""))
+                summary["published"] += 1
+                self.store.refresh_content_publish_state(content_key, self._enabled_publish_platforms())
+                # Si faltan otras plataformas, la pieza sigue en la cola para completarlas.
+                self.store.defer_publish(content_key, "completar_plataformas_tras_interrupcion")
+            else:
+                self.store.resolve_publication(content_key, platform, status="failed", error_message="interrumpida_antes_de_publicar")
+                summary["failed"] += 1
+                # Verificado que no salio: vuelve a la cola para publicarse normalmente.
+                self.store.refresh_content_publish_state(content_key, self._enabled_publish_platforms())
+                self.store.defer_publish(content_key, "reintento_tras_interrupcion")
+        return {k: v for k, v in summary.items() if v}
 
     def _top_up_slot_videos(self, *, active_slot: str) -> Dict[str, int]:
         target = max(0, int(self.settings.schedule_videos_per_slot))
@@ -602,6 +665,8 @@ class DuoPipeline:
         try:
             for platform in platforms:
                 try:
+                    if platform in {"instagram", "facebook"}:
+                        self.store.mark_publication_in_flight(package.content_key, platform, package.caption, package.post_type)
                     if platform == "instagram":
                         records.append(self.publisher.publish_instagram(package, scheduled_for=scheduled_for))
                     elif platform == "facebook":

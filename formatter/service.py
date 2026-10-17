@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shutil
+import time
 import unicodedata
 from html import unescape
 from pathlib import Path
@@ -24,8 +26,17 @@ from utils.image_processor import (
     normalize_for_instagram_premium_v2_secondary,
     process_image,
 )
+from formatter.motion_engine import (
+    MotionEngine,
+    MotionRenderError,
+    MotionUnavailable,
+    extract_visual,
+    split_text_slides,
+)
 from utils.instagram_carousel_slices import build_raw_news_text, create_instagram_carousel_from_news
 from utils.video_processor import download_video_if_needed, process_video_for_instagram
+
+LOGGER = logging.getLogger(__name__)
 
 
 class AssetFormatter:
@@ -76,6 +87,13 @@ class AssetFormatter:
                 str(self.settings.base_dir / "video_app" / "assets" / "templates" / "hola_salta.json"),
             )
         )
+        # Motor audiovisual (motion/). Si no esta disponible o falla, se usa el
+        # formateador legado de esta clase (fallback automatico por pieza).
+        self.motion = MotionEngine(self.settings)
+
+    def close(self) -> None:
+        """Libera el worker de render (llamar al terminar la etapa de formato)."""
+        self.motion.close()
 
     def format_row(self, row: Dict[str, object], *, dry_run: bool = False) -> FormattedPackage:
         editorial = self._load_json(row.get("editorial_json"))
@@ -87,6 +105,13 @@ class AssetFormatter:
             package = self._format_dry_run(content_key, row=row, assets=assets, editorial=editorial, caption=caption)
             self._validate_package(package, dry_run=True)
             return package
+        if self.motion.enabled:
+            motion_package = self._format_with_motion(
+                content_key, row=row, assets=assets, editorial=editorial, raw_payload=raw_payload, caption=caption
+            )
+            if motion_package is not None:
+                self._validate_package(motion_package, dry_run=False)
+                return motion_package
         if any(asset.kind == "video" for asset in assets):
             try:
                 package = self._format_video(content_key, row=row, assets=assets, editorial=editorial, caption=caption)
@@ -114,6 +139,151 @@ class AssetFormatter:
             )
         self._validate_package(package, dry_run=False)
         return package
+
+    # ------------------------------------------------------------------
+    # Motor audiovisual
+    # ------------------------------------------------------------------
+
+    def _format_with_motion(
+        self,
+        content_key: str,
+        *,
+        row: Dict[str, object],
+        assets: List[Asset],
+        editorial: Dict[str, object],
+        raw_payload: Dict[str, object],
+        caption: str,
+    ) -> FormattedPackage | None:
+        """Pieza con el motor; None = usar el formateador legado."""
+        started = time.monotonic()
+        try:
+            title_text = self._title_for_visual(editorial, row, raw_payload)
+            theme = self._visual_theme_for_row(row, raw_payload=raw_payload, title_text=title_text)
+            brief = extract_visual(editorial, row, raw_payload, fallback_title=title_text, theme=theme)
+            video_asset = next((a for a in assets if a.kind == "video"), None)
+            if video_asset is not None:
+                local_video = video_asset.path or download_video_if_needed(video_asset.remote_url, content_key, 0)
+                if local_video:
+                    content = self.motion.build_content(content_key, row, brief, video=str(local_video))
+                    template = "breaking" if brief.breaking else "editorial"
+                    return self._motion_reel_package(content_key, content, template, caption, editorial, row, started, brief)
+                if not any(a.kind == "image" for a in assets) or str(row.get("source_type") or "").lower() == "x_video":
+                    raise RuntimeError(f"{content_key} no tiene video local o descargable")
+
+            local_images = self._motion_local_images(content_key, assets, row=row, raw_payload=raw_payload)
+            source = str(row.get("source") or "").lower().strip()
+            if source == "noticiasargentinas" and local_images:
+                local_images[0] = self._prepare_na_source_with_black_box(local_images[0], content_key)
+            content = self.motion.build_content(content_key, row, brief, photos=local_images)
+            reel_template = self.motion.wants_photo_reel(brief) if local_images else None
+            if reel_template:
+                return self._motion_reel_package(content_key, content, reel_template, caption, editorial, row, started, brief)
+
+            text_slides: List[str] = []
+            if source == "noticiasargentinas":
+                text_slides = self._motion_text_slides(raw_payload, row)
+            rendered = self.motion.render_post(
+                content_key, content, self.settings.formatted_image_dir, extra_text_slides=text_slides
+            )
+            paths = rendered["paths"]
+            publish_assets = [
+                Asset(kind="image", path=path, meta={"role": "cover" if index == 0 else "carousel"})
+                for index, path in enumerate(paths)
+            ]
+            return FormattedPackage(
+                content_key=content_key,
+                post_type="carousel" if len(publish_assets) > 1 else "image",
+                caption=caption,
+                thumbnail_path=paths[0],
+                assets=publish_assets,
+                meta={
+                    "overlay": editorial.get("overlay"),
+                    "source_media_type": row.get("media_type"),
+                    "style": "motion_engine",
+                    "template": "static",
+                    "category": brief.category,
+                    "render_seconds": round(time.monotonic() - started, 1),
+                    "motion_piece": rendered["piece"],
+                },
+            )
+        except (MotionUnavailable, MotionRenderError) as exc:
+            LOGGER.warning("motion_fallback %s: %s", content_key, exc)
+            return None
+        except RuntimeError as exc:
+            if "no tiene video local o descargable" in str(exc):
+                raise
+            LOGGER.warning("motion_fallback %s: %s", content_key, exc)
+            return None
+
+    def _motion_reel_package(
+        self,
+        content_key: str,
+        content: Dict[str, object],
+        template: str,
+        caption: str,
+        editorial: Dict[str, object],
+        row: Dict[str, object],
+        started: float,
+        brief,
+    ) -> FormattedPackage:
+        output_path = self.settings.formatted_video_dir / f"{content_key}_reel.mp4"
+        rendered = self.motion.render_reel(content_key, content, template, output_path)
+        final_path = str(rendered["path"])
+        thumbnail_path = self._render_thumbnail(final_path, self.settings.formatted_video_dir / f"{content_key}_thumb.jpg")
+        duration = float(rendered["piece"]["presentation"]["durationSeconds"])
+        return FormattedPackage(
+            content_key=content_key,
+            post_type="reel",
+            caption=caption,
+            thumbnail_path=thumbnail_path,
+            assets=[Asset(kind="video", path=final_path, duration_seconds=duration, meta={"role": "publish"})],
+            meta={
+                "overlay": editorial.get("overlay"),
+                "source_media_type": row.get("media_type"),
+                "style": "motion_engine",
+                "template": template,
+                "category": brief.category,
+                "render_seconds": round(time.monotonic() - started, 1),
+                "motion_piece": rendered["piece"],
+            },
+        )
+
+    def _motion_local_images(
+        self,
+        content_key: str,
+        assets: List[Asset],
+        *,
+        row: Dict[str, object],
+        raw_payload: Dict[str, object],
+    ) -> List[str]:
+        local: List[str] = []
+        for index, asset in enumerate(a for a in assets if a.kind == "image"):
+            try:
+                path = self._ensure_local_image(asset, content_key, index, row=row, raw_payload=raw_payload)
+            except RuntimeError:
+                continue
+            # La imagen de relleno del legado no es una foto real: sin foto -> variante tipografica.
+            if path and "_fallback." not in Path(path).name:
+                local.append(path)
+            if len(local) >= 10:
+                break
+        return local
+
+    @staticmethod
+    def _motion_text_slides(raw_payload: Dict[str, object], row: Dict[str, object]) -> List[str]:
+        """Texto curado (LLM) de la nota partido en 1-2 slides; nunca inventa."""
+        from utils import instagram_carousel_slices as slices
+
+        news_payload = raw_payload if raw_payload else AssetFormatter._fallback_news_payload(row)
+        raw_text = slices._clean_text(build_raw_news_text(news_payload))
+        if not raw_text:
+            return []
+        try:
+            curated = slices._call_llm(raw_text)
+        except Exception:
+            curated = raw_text
+        sentences = slices._limit_sentences(slices._split_sentences(slices._clean_text(curated or raw_text)))
+        return split_text_slides(" ".join(sentences))
 
     def _format_dry_run(
         self,
@@ -596,7 +766,12 @@ class AssetFormatter:
     @staticmethod
     def _render_thumbnail(video_path: str, output_path: Path) -> str:
         capture = cv2.VideoCapture(video_path)
+        # 2.5 s: en las piezas del motor el titular ya esta en pantalla.
+        capture.set(cv2.CAP_PROP_POS_MSEC, 2500)
         ok, frame = capture.read()
+        if not ok or frame is None:
+            capture.set(cv2.CAP_PROP_POS_MSEC, 0)
+            ok, frame = capture.read()
         capture.release()
         if not ok or frame is None:
             return ""

@@ -1,0 +1,77 @@
+@import "tailwindcss";
+
+/* Tipografias de marca tambien en el panel (OFL, servidas desde public/fonts). */
+@font-face {
+  font-family: "UIArchivo";
+  src: url("/fonts/Archivo-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-stretch: 62% 125%;
+  font-display: swap;
+}
+@font-face {
+  font-family: "UIMono";
+  src: url("/fonts/JetBrainsMono-Variable.woff2") format("woff2");
+  font-weight: 100 800;
+  font-display: swap;
+}
+@font-face {
+  font-family: "UIFraunces";
+  src: url("/fonts/Fraunces-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@theme {
+  --color-ink: #0b0810;
+  --color-panel: #13101a;
+  --color-raised: #1a1522;
+  --color-line: #2a2335;
+  --color-line-strong: #3a3148;
+  --color-mute: #8d849b;
+  --color-soft: #c9c2d4;
+  --color-violet: #361957;
+  --color-violet-hi: #5b2f8f;
+  --color-amber: #ffb700;
+  --color-signal: #ff3d2e;
+  --font-sans: "UIArchivo", system-ui, sans-serif;
+  --font-mono: "UIMono", ui-monospace, monospace;
+  --font-serif: "UIFraunces", Georgia, serif;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background: var(--color-ink);
+  color: #f3eff8;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--color-amber);
+  color: var(--color-ink);
+}
+
+/* Controles de formulario coherentes */
+.field {
+  @apply w-full rounded-[3px] border border-line bg-ink px-3 py-2 text-[14px] text-white outline-none transition-colors placeholder:text-mute/70 focus:border-amber;
+}
+.label {
+  @apply mb-1.5 block font-mono text-[10.5px] uppercase tracking-[0.12em] text-mute;
+}
+.section-title {
+  @apply font-mono text-[11px] uppercase tracking-[0.16em] text-amber;
+}
+input[type="range"] {
+  accent-color: var(--color-amber);
+}
+.scroll-thin::-webkit-scrollbar {
+  width: 8px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: var(--color-line);
+  border-radius: 4px;
+}
