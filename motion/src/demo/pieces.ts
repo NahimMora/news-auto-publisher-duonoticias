@@ -53,6 +53,16 @@ export const demoEditorial: PieceInput = {
   presentation: { template: "editorial", hook: "photo", format: "reel", durationSeconds: 15 },
 };
 
+/** Misma nota que demoEditorial con un video vertical (9:16): va a pantalla completa. */
+export const demoEditorialVertical: PieceInput = {
+  content: {
+    ...demoEditorial.content,
+    id: "demo-editorial-vertical",
+    videos: [{ src: "demo/cafayate-vertical.mp4", width: 1080, height: 1920, durationSeconds: 16, keepAudio: false }],
+  },
+  presentation: demoEditorial.presentation,
+};
+
 export const demoData: PieceInput = {
   content: {
     id: "demo-data",
@@ -127,11 +137,65 @@ export const demoStaticType: PieceInput = {
   presentation: { template: "static", format: "portrait", staticVariant: "auto", durationSeconds: 5 },
 };
 
+export const demoStaticSplit: PieceInput = {
+  content: {
+    id: "demo-static-split",
+    originalTitle: "La Municipalidad anunció obras de repavimentación en avenidas del centro de Salta",
+    headline: "Repavimentarán seis avenidas del centro y habrá cortes de tránsito *desde el lunes*",
+    deck: "",
+    category: "sociedad",
+    location: "Salta Capital",
+    date: now,
+    source: { name: "Redacción Dúo (demo)" },
+    photos: [{ src: "demo/ciudad.jpg", width: 2000, height: 1500, focus: { x: 0.5, y: 0.5 } }],
+    editorialStatus: "review",
+    isDemo: true,
+  },
+  presentation: { template: "static", format: "portrait", staticVariant: "auto", durationSeconds: 5 },
+};
+
+export const demoStaticTypeCalm: PieceInput = {
+  content: {
+    id: "demo-static-type-calm",
+    originalTitle: "Abre la inscripción a las becas provinciales para estudiantes universitarios",
+    headline: "Abre la inscripción a las becas *universitarias* de la Provincia",
+    deck: "",
+    category: "educacion",
+    location: "Provincia de Salta",
+    date: now,
+    source: { name: "Redacción Dúo (demo)" },
+    photos: [],
+    editorialStatus: "review",
+    isDemo: true,
+  },
+  presentation: { template: "static", format: "portrait", staticVariant: "auto", durationSeconds: 5 },
+};
+
+export const demoStaticTextSlide: PieceInput = {
+  content: { ...demoStaticSplit.content, id: "demo-static-text-slide" },
+  presentation: {
+    template: "static",
+    format: "portrait",
+    staticVariant: "auto",
+    durationSeconds: 5,
+    slide: {
+      kind: "text",
+      index: 1,
+      total: 3,
+      text: "Los trabajos empiezan el lunes en avenida Belgrano y siguen por etapas en San Martín, Sarmiento, Entre Ríos, Virrey Toledo y Jujuy. Cada tramo estará cortado entre tres y cinco días y habrá desvíos señalizados para colectivos.",
+    },
+  },
+};
+
 export const demos = {
   breaking: demoBreaking,
   editorial: demoEditorial,
+  editorialVertical: demoEditorialVertical,
   data: demoData,
   staticPortrait: demoStaticPortrait,
   staticSquare: demoStaticSquare,
   staticType: demoStaticType,
+  staticSplit: demoStaticSplit,
+  staticTypeCalm: demoStaticTypeCalm,
+  staticTextSlide: demoStaticTextSlide,
 };

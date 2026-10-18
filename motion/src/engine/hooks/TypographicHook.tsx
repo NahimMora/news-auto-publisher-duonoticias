@@ -56,7 +56,7 @@ const TypographicOverlay: React.FC<HookProps> = ({ content, layout, accent, temp
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [keyword, maxW, layout.u, layout.format, height],
   );
-  const exitStart = durationFrames - sec(0.42, fps, cfg.speed);
+  const exitStart = durationFrames - sec(0.3, fps, cfg.speed);
   // Respiracion de escala durante todo el gancho (camara que se acerca).
   const breathe = interpolate(frame, [0, durationFrames], [1.06, 1], { extrapolateRight: "clamp" });
   // Esquinas de la marca (como la plantilla original) entrando en diagonal.
@@ -65,7 +65,7 @@ const TypographicOverlay: React.FC<HookProps> = ({ content, layout, accent, temp
   const top = height * 0.52 - block.height / 2;
 
   return (
-    <MaskWipe mode="out" delay={exitStart / fps} duration={0.42} easing="exit">
+    <MaskWipe mode="out" delay={exitStart / fps} duration={0.3} easing="exit">
       <AbsoluteFill style={{ background: field, overflow: "hidden" }}>
         {/* Eco tipografico en contorno: profundidad sin ruido */}
         <div
@@ -109,7 +109,8 @@ export const typographicHook: HookDefinition = {
   id: "typographic",
   label: "Impacto tipográfico",
   description: "La palabra clave golpea a cuerpo máximo y una barrida diagonal revela la noticia.",
-  seconds: 1.5,
+  // Corto a proposito: la palabra golpea y enseguida entra la noticia.
+  seconds: 0.95,
   Overlay: TypographicOverlay,
   suits: (content, template) => (template === "breaking" || content.breaking ? 0.9 : content.photos.length + content.videos.length === 0 ? 0.8 : 0.35),
 };

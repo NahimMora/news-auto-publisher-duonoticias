@@ -115,7 +115,8 @@ export const TextReveal: React.FC<TextRevealProps> = ({
           style={{
             position: "absolute",
             left: "-0.06em",
-            right: isLast ? "-0.06em" : "0.18em",
+            // Varias palabras resaltadas seguidas: el marcador cubre el espacio entre ellas.
+            right: isLast ? "-0.06em" : line[i + 1]?.emphasis ? "-0.02em" : "0.18em",
             // Cubre las tildes de mayusculas (TELEFÉRICO): el texto enfatizado es oscuro.
             top: "-0.14em",
             bottom: "0.02em",

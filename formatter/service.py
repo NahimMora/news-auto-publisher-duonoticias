@@ -4,7 +4,6 @@ import json
 import logging
 import os
 import re
-import shutil
 import time
 import unicodedata
 from html import unescape
@@ -31,10 +30,10 @@ from formatter.motion_engine import (
     MotionRenderError,
     MotionUnavailable,
     extract_visual,
-    split_text_slides,
 )
-from utils.instagram_carousel_slices import build_raw_news_text, create_instagram_carousel_from_news
-from utils.video_processor import download_video_if_needed, process_video_for_instagram
+from storage.editorial_config import load_editorial_config
+from utils.video_clips import cut_segment, plan_clips
+from utils.video_processor import process_video_for_instagram
 
 LOGGER = logging.getLogger(__name__)
 
@@ -42,6 +41,7 @@ LOGGER = logging.getLogger(__name__)
 class AssetFormatter:
     def __init__(self, settings: PipelineSettings | None = None) -> None:
         self.settings = settings or get_settings()
+        self.config = load_editorial_config(self.settings)
         self.settings.formatted_video_dir.mkdir(parents=True, exist_ok=True)
         self.settings.formatted_image_dir.mkdir(parents=True, exist_ok=True)
         self.temp_dir = self.settings.data_dir / "ig_tmp"
@@ -96,55 +96,153 @@ class AssetFormatter:
         self.motion.close()
 
     def format_row(self, row: Dict[str, object], *, dry_run: bool = False) -> FormattedPackage:
+        """Video real -> reel (o carrusel de 2 clips); sin video -> imagen o carrusel estatico.
+
+        Nunca se arma un reel animando fotos. El video ya llega descargado,
+        verificado y (si correspondia) recortado por la etapa de multimedia del
+        pipeline (``media_json.video``).
+        """
         editorial = self._load_json(row.get("editorial_json"))
         assets = self._load_assets(row.get("assets_json"))
         raw_payload = self._load_json(row.get("raw_payload_json"))
+        media = self._load_json(row.get("media_json"))
+        video = media.get("video") if isinstance(media.get("video"), dict) else None
         content_key = str(row.get("content_key") or "")
-        caption = str(editorial.get("caption") or row.get("summary") or "").strip()
+        caption = str(editorial.get("caption") or "").strip()
         if dry_run:
-            package = self._format_dry_run(content_key, row=row, assets=assets, editorial=editorial, caption=caption)
+            package = self._format_dry_run(content_key, row=row, assets=assets, editorial=editorial, caption=caption, video=video)
             self._validate_package(package, dry_run=True)
             return package
-        if self.motion.enabled:
-            motion_package = self._format_with_motion(
-                content_key, row=row, assets=assets, editorial=editorial, raw_payload=raw_payload, caption=caption
-            )
-            if motion_package is not None:
-                self._validate_package(motion_package, dry_run=False)
-                return motion_package
-        if any(asset.kind == "video" for asset in assets):
-            try:
-                package = self._format_video(content_key, row=row, assets=assets, editorial=editorial, caption=caption)
-            except RuntimeError as exc:
-                has_image_fallback = any(asset.kind == "image" for asset in assets)
-                source_type = str(row.get("source_type") or "").lower().strip()
-                if "no tiene video local o descargable" not in str(exc) or not has_image_fallback or source_type == "x_video":
-                    raise
-                package = self._format_image(
-                    content_key,
-                    row=row,
-                    assets=assets,
-                    editorial=editorial,
-                    raw_payload=raw_payload,
-                    caption=caption,
-                )
+        if video and video.get("path"):
+            package = self._format_video_piece(content_key, row=row, editorial=editorial, raw_payload=raw_payload, caption=caption, video=video)
         else:
-            package = self._format_image(
-                content_key,
-                row=row,
-                assets=assets,
-                editorial=editorial,
-                raw_payload=raw_payload,
-                caption=caption,
-            )
+            if self.config.requires_video(row.get("source")) or str(row.get("source_type") or "").lower() == "x_video":
+                raise RuntimeError(f"{content_key} exige video real y no tiene uno verificado")
+            package = self._format_static(content_key, row=row, assets=assets, editorial=editorial, raw_payload=raw_payload, caption=caption)
         self._validate_package(package, dry_run=False)
         return package
 
     # ------------------------------------------------------------------
-    # Motor audiovisual
+    # Video real: reel o carrusel de dos clips cronologicos
     # ------------------------------------------------------------------
 
-    def _format_with_motion(
+    def _format_video_piece(
+        self,
+        content_key: str,
+        *,
+        row: Dict[str, object],
+        editorial: Dict[str, object],
+        raw_payload: Dict[str, object],
+        caption: str,
+        video: Dict[str, object],
+    ) -> FormattedPackage:
+        source = str(video.get("path") or "")
+        duration = float(video.get("duration_seconds") or 0.0)
+        clips = plan_clips(
+            duration,
+            clip_seconds=self.config.clip_seconds,
+            max_clips=self.config.max_clips,
+            min_clip_seconds=self.config.min_clip_seconds,
+        )
+        if not clips:
+            raise RuntimeError(f"{content_key} video sin duracion valida")
+        started = time.monotonic()
+        rendered: List[Asset] = []
+        thumbnail = ""
+        style = ""
+        for clip in clips:
+            if len(clips) == 1 and clip.start == 0 and clip.duration >= duration - 0.5:
+                segment = source
+            else:
+                segment = cut_segment(
+                    source,
+                    str(self.settings.formatted_video_dir / f"{content_key}_src{clip.index + 1}.mp4"),
+                    clip,
+                    ffmpeg=self.settings.ffmpeg_path,
+                )
+            name = f"{content_key}_reel.mp4" if len(clips) == 1 else f"{content_key}_clip{clip.index + 1}.mp4"
+            path, style = self._render_video_segment(
+                content_key,
+                row=row,
+                editorial=editorial,
+                raw_payload=raw_payload,
+                segment=segment,
+                seconds=clip.duration,
+                output=self.settings.formatted_video_dir / name,
+            )
+            if not thumbnail:
+                thumbnail = self._render_thumbnail(path, self.settings.formatted_video_dir / f"{content_key}_thumb.jpg")
+            rendered.append(
+                Asset(
+                    kind="video",
+                    path=path,
+                    duration_seconds=clip.duration,
+                    meta={
+                        "role": "publish" if len(clips) == 1 else "carousel_video",
+                        "clip_start": clip.start,
+                        "clip_end": clip.end,
+                    },
+                )
+            )
+        return FormattedPackage(
+            content_key=content_key,
+            post_type="reel" if len(rendered) == 1 else "carousel",
+            caption=caption,
+            thumbnail_path=thumbnail,
+            assets=rendered,
+            meta={
+                "overlay": editorial.get("overlay"),
+                "source_media_type": row.get("media_type"),
+                "style": style,
+                "video_source_kind": video.get("kind"),
+                "video_source_duration": duration,
+                "clips": [{"start": c.start, "end": c.end} for c in clips],
+                # Facebook no publica carruseles de video por API: va el primer tramo con el mismo caption.
+                "facebook_video_index": 0,
+                "render_seconds": round(time.monotonic() - started, 1),
+            },
+        )
+
+    def _render_video_segment(
+        self,
+        content_key: str,
+        *,
+        row: Dict[str, object],
+        editorial: Dict[str, object],
+        raw_payload: Dict[str, object],
+        segment: str,
+        seconds: float,
+        output: Path,
+    ) -> tuple[str, str]:
+        """Plantilla audiovisual existente (motion/); si no responde, el formateador legado."""
+        if self.motion.enabled:
+            try:
+                title_text = self._title_for_visual(editorial, row, raw_payload)
+                theme = self._visual_theme_for_row(row, raw_payload=raw_payload, title_text=title_text)
+                brief = extract_visual(editorial, row, raw_payload, fallback_title=title_text, theme=theme)
+                content = self.motion.build_content(content_key, row, brief, video=segment)
+                template = "breaking" if brief.breaking else "editorial"
+                rendered = self.motion.render_reel(content_key, content, template, output, seconds=seconds)
+                return str(rendered["path"]), f"motion_engine:{template}"
+            except (MotionUnavailable, MotionRenderError) as exc:
+                LOGGER.warning("motion_fallback %s: %s", content_key, exc)
+        layout_template = self.video_template_path if self.video_use_layout and self._exists(self.video_template_path) else None
+        final_path = process_video_for_instagram(
+            segment,
+            str(output),
+            template_path=layout_template,
+            enable_subtitles=self.video_subtitles,
+            quality=self.video_quality,
+            title_text=str(editorial.get("overlay") or editorial.get("hook") or "").strip() or None,
+            output_mode="reel",
+        )
+        return str(final_path), "legacy_video_formatter"
+
+    # ------------------------------------------------------------------
+    # Sin video: imagen o carrusel estatico (formato periodistico existente)
+    # ------------------------------------------------------------------
+
+    def _format_static(
         self,
         content_key: str,
         *,
@@ -153,100 +251,39 @@ class AssetFormatter:
         editorial: Dict[str, object],
         raw_payload: Dict[str, object],
         caption: str,
-    ) -> FormattedPackage | None:
-        """Pieza con el motor; None = usar el formateador legado."""
-        started = time.monotonic()
-        try:
-            title_text = self._title_for_visual(editorial, row, raw_payload)
-            theme = self._visual_theme_for_row(row, raw_payload=raw_payload, title_text=title_text)
-            brief = extract_visual(editorial, row, raw_payload, fallback_title=title_text, theme=theme)
-            video_asset = next((a for a in assets if a.kind == "video"), None)
-            if video_asset is not None:
-                local_video = video_asset.path or download_video_if_needed(video_asset.remote_url, content_key, 0)
-                if local_video:
-                    content = self.motion.build_content(content_key, row, brief, video=str(local_video))
-                    template = "breaking" if brief.breaking else "editorial"
-                    return self._motion_reel_package(content_key, content, template, caption, editorial, row, started, brief)
-                if not any(a.kind == "image" for a in assets) or str(row.get("source_type") or "").lower() == "x_video":
-                    raise RuntimeError(f"{content_key} no tiene video local o descargable")
-
-            local_images = self._motion_local_images(content_key, assets, row=row, raw_payload=raw_payload)
-            source = str(row.get("source") or "").lower().strip()
-            if source == "noticiasargentinas" and local_images:
-                local_images[0] = self._prepare_na_source_with_black_box(local_images[0], content_key)
-            content = self.motion.build_content(content_key, row, brief, photos=local_images)
-            reel_template = self.motion.wants_photo_reel(brief) if local_images else None
-            if reel_template:
-                return self._motion_reel_package(content_key, content, reel_template, caption, editorial, row, started, brief)
-
-            text_slides: List[str] = []
-            if source == "noticiasargentinas":
-                text_slides = self._motion_text_slides(raw_payload, row)
-            rendered = self.motion.render_post(
-                content_key, content, self.settings.formatted_image_dir, extra_text_slides=text_slides
-            )
-            paths = rendered["paths"]
-            publish_assets = [
-                Asset(kind="image", path=path, meta={"role": "cover" if index == 0 else "carousel"})
-                for index, path in enumerate(paths)
-            ]
-            return FormattedPackage(
-                content_key=content_key,
-                post_type="carousel" if len(publish_assets) > 1 else "image",
-                caption=caption,
-                thumbnail_path=paths[0],
-                assets=publish_assets,
-                meta={
-                    "overlay": editorial.get("overlay"),
-                    "source_media_type": row.get("media_type"),
-                    "style": "motion_engine",
-                    "template": "static",
-                    "category": brief.category,
-                    "render_seconds": round(time.monotonic() - started, 1),
-                    "motion_piece": rendered["piece"],
-                },
-            )
-        except (MotionUnavailable, MotionRenderError) as exc:
-            LOGGER.warning("motion_fallback %s: %s", content_key, exc)
-            return None
-        except RuntimeError as exc:
-            if "no tiene video local o descargable" in str(exc):
-                raise
-            LOGGER.warning("motion_fallback %s: %s", content_key, exc)
-            return None
-
-    def _motion_reel_package(
-        self,
-        content_key: str,
-        content: Dict[str, object],
-        template: str,
-        caption: str,
-        editorial: Dict[str, object],
-        row: Dict[str, object],
-        started: float,
-        brief,
     ) -> FormattedPackage:
-        output_path = self.settings.formatted_video_dir / f"{content_key}_reel.mp4"
-        rendered = self.motion.render_reel(content_key, content, template, output_path)
-        final_path = str(rendered["path"])
-        thumbnail_path = self._render_thumbnail(final_path, self.settings.formatted_video_dir / f"{content_key}_thumb.jpg")
-        duration = float(rendered["piece"]["presentation"]["durationSeconds"])
-        return FormattedPackage(
-            content_key=content_key,
-            post_type="reel",
-            caption=caption,
-            thumbnail_path=thumbnail_path,
-            assets=[Asset(kind="video", path=final_path, duration_seconds=duration, meta={"role": "publish"})],
-            meta={
-                "overlay": editorial.get("overlay"),
-                "source_media_type": row.get("media_type"),
-                "style": "motion_engine",
-                "template": template,
-                "category": brief.category,
-                "render_seconds": round(time.monotonic() - started, 1),
-                "motion_piece": rendered["piece"],
-            },
-        )
+        if self.motion.enabled:
+            started = time.monotonic()
+            try:
+                title_text = self._title_for_visual(editorial, row, raw_payload)
+                theme = self._visual_theme_for_row(row, raw_payload=raw_payload, title_text=title_text)
+                brief = extract_visual(editorial, row, raw_payload, fallback_title=title_text, theme=theme)
+                local_images = self._motion_local_images(content_key, assets, row=row, raw_payload=raw_payload)
+                content = self.motion.build_content(content_key, row, brief, photos=local_images)
+                rendered = self.motion.render_post(content_key, content, self.settings.formatted_image_dir)
+                paths = rendered["paths"]
+                return FormattedPackage(
+                    content_key=content_key,
+                    post_type="carousel" if len(paths) > 1 else "image",
+                    caption=caption,
+                    thumbnail_path=paths[0],
+                    assets=[
+                        Asset(kind="image", path=path, meta={"role": "cover" if index == 0 else "carousel"})
+                        for index, path in enumerate(paths)
+                    ],
+                    meta={
+                        "overlay": editorial.get("overlay"),
+                        "source_media_type": row.get("media_type"),
+                        "style": "motion_engine",
+                        "template": "static",
+                        "category": brief.category,
+                        "render_seconds": round(time.monotonic() - started, 1),
+                        "motion_piece": rendered["piece"],
+                    },
+                )
+            except (MotionUnavailable, MotionRenderError) as exc:
+                LOGGER.warning("motion_fallback %s: %s", content_key, exc)
+        return self._format_image(content_key, row=row, assets=assets, editorial=editorial, raw_payload=raw_payload, caption=caption)
 
     def _motion_local_images(
         self,
@@ -269,22 +306,6 @@ class AssetFormatter:
                 break
         return local
 
-    @staticmethod
-    def _motion_text_slides(raw_payload: Dict[str, object], row: Dict[str, object]) -> List[str]:
-        """Texto curado (LLM) de la nota partido en 1-2 slides; nunca inventa."""
-        from utils import instagram_carousel_slices as slices
-
-        news_payload = raw_payload if raw_payload else AssetFormatter._fallback_news_payload(row)
-        raw_text = slices._clean_text(build_raw_news_text(news_payload))
-        if not raw_text:
-            return []
-        try:
-            curated = slices._call_llm(raw_text)
-        except Exception:
-            curated = raw_text
-        sentences = slices._limit_sentences(slices._split_sentences(slices._clean_text(curated or raw_text)))
-        return split_text_slides(" ".join(sentences))
-
     def _format_dry_run(
         self,
         content_key: str,
@@ -293,68 +314,35 @@ class AssetFormatter:
         assets: List[Asset],
         editorial: Dict[str, object],
         caption: str,
+        video: Dict[str, object] | None = None,
     ) -> FormattedPackage:
-        post_type = "reel" if any(asset.kind == "video" for asset in assets) else ("carousel" if len(assets) > 1 else "image")
+        if video:
+            clips = plan_clips(
+                float(video.get("duration_seconds") or 0.0),
+                clip_seconds=self.config.clip_seconds,
+                max_clips=self.config.max_clips,
+                min_clip_seconds=self.config.min_clip_seconds,
+            )
+            post_type = "reel" if len(clips) <= 1 else "carousel"
+            planned = [
+                Asset(kind="video", path=str(video.get("path") or ""), duration_seconds=c.duration, meta={"clip_start": c.start, "clip_end": c.end})
+                for c in clips
+            ] or [Asset(kind="video", path=str(video.get("path") or ""))]
+        else:
+            images = [asset for asset in assets if asset.kind == "image"]
+            post_type = "carousel" if len(images) > 1 else "image"
+            planned = images[:10]
         return FormattedPackage(
             content_key=content_key,
             post_type=post_type,
             caption=caption,
-            thumbnail_path=next((asset.path for asset in assets if asset.path), ""),
-            assets=assets[:10],
+            thumbnail_path=next((asset.path for asset in planned if asset.path), ""),
+            assets=planned,
             meta={
                 "dry_run": True,
                 "overlay": editorial.get("overlay"),
                 "source_media_type": row.get("media_type"),
                 "style": "dry_run_no_media_processing",
-            },
-        )
-
-    def _format_video(
-        self,
-        content_key: str,
-        *,
-        row: Dict[str, object],
-        assets: List[Asset],
-        editorial: Dict[str, object],
-        caption: str,
-    ) -> FormattedPackage:
-        source = next(asset for asset in assets if asset.kind == "video")
-        source_ref = source.path or source.remote_url
-        local_input = source.path or download_video_if_needed(source_ref, content_key, 0)
-        if not local_input:
-            raise RuntimeError(f"{content_key} no tiene video local o descargable")
-        layout_template = self.video_template_path if self.video_use_layout and self._exists(self.video_template_path) else None
-        if self.video_use_layout and not layout_template:
-            raise RuntimeError(f"{content_key} no encuentra plantilla de layout de video: {self.video_template_path}")
-        output_path = self.settings.formatted_video_dir / f"{content_key}_reel.mp4"
-        final_path = process_video_for_instagram(
-            local_input,
-            str(output_path),
-            template_path=layout_template,
-            enable_subtitles=self.video_subtitles,
-            quality=self.video_quality,
-            title_text=str(editorial.get("overlay") or editorial.get("hook") or "").strip() or None,
-            output_mode="reel",
-        )
-        thumbnail_path = self._render_thumbnail(final_path, self.settings.formatted_video_dir / f"{content_key}_thumb.jpg")
-        return FormattedPackage(
-            content_key=content_key,
-            post_type="reel",
-            caption=caption,
-            thumbnail_path=thumbnail_path,
-            assets=[
-                Asset(
-                    kind="video",
-                    path=final_path,
-                    duration_seconds=source.duration_seconds,
-                    meta={"role": "publish"},
-                )
-            ],
-            meta={
-                "overlay": editorial.get("overlay"),
-                "source_media_type": row.get("media_type"),
-                "style": "legacy_video_formatter",
-                "layout_template": layout_template or "",
             },
         )
 
@@ -396,24 +384,13 @@ class AssetFormatter:
                 raise RuntimeError("; ".join(image_errors[:3]))
             raise RuntimeError(f"{content_key} no pudo preparar imagen fuente")
 
-        if source == "noticiasargentinas":
-            publish_assets = self._format_noticias_arg_carousel(
-                content_key,
-                local_images=local_images,
-                title_text=title_text,
-                visual_theme=visual_theme,
-                kicker_text=kicker_text,
-                raw_payload=raw_payload,
-                row=row,
-            )
-        else:
-            publish_assets = self._format_standard_image_set(
-                content_key,
-                local_images=local_images,
-                title_text=title_text,
-                visual_theme=visual_theme,
-                kicker_text=kicker_text,
-            )
+        publish_assets = self._format_standard_image_set(
+            content_key,
+            local_images=local_images,
+            title_text=title_text,
+            visual_theme=visual_theme,
+            kicker_text=kicker_text,
+        )
 
         post_type = "carousel" if len(publish_assets) > 1 else "image"
         thumbnail_path = publish_assets[0].path if publish_assets else ""
@@ -531,84 +508,6 @@ class AssetFormatter:
                 meta={"role": "cover" if index == 0 else "carousel"},
             )
             for index, path in enumerate(overlay_images)
-        ]
-
-    def _format_noticias_arg_carousel(
-        self,
-        content_key: str,
-        *,
-        local_images: List[str],
-        title_text: str,
-        visual_theme: str,
-        kicker_text: str,
-        raw_payload: Dict[str, object],
-        row: Dict[str, object],
-    ) -> List[Asset]:
-        primary = self._prepare_na_source_with_black_box(local_images[0], content_key)
-        if self.image_layout_style == "legacy":
-            cover_path = normalize_for_instagram_pink_card(
-                primary,
-                output_filename=f"{content_key}_00.jpg",
-                folder=str(self.settings.formatted_image_dir),
-                target_size=self.target_size,
-                corner_logo_path=self.square_logo_path if self._exists(self.square_logo_path) else None,
-                slide_icon_path=self.slide_icon_path if self._exists(self.slide_icon_path) else None,
-                center_logo_path=self.watermark_path if self._exists(self.watermark_path) else None,
-                footer_logo_path=self.footer_logo_path if self._exists(self.footer_logo_path) else None,
-                title_text=title_text,
-                title_font_path=self.title_font_path if self._exists(self.title_font_path) else None,
-                title_color=self.title_color,
-                title_shadow_color=self.title_shadow_color,
-                title_shadow_offset=self.title_shadow_offset,
-                overlay_template_path=self.overlay_template_path if self._exists(self.overlay_template_path) else None,
-            )
-        elif self.image_layout_style == "premium":
-            cover_path = normalize_for_instagram_premium_card(
-                primary,
-                output_filename=f"{content_key}_00.jpg",
-                folder=str(self.settings.formatted_image_dir),
-                target_size=self.target_size,
-                title_text=title_text,
-                title_font_path=self.title_font_path if self._exists(self.title_font_path) else None,
-                title_color=self.title_color,
-                title_shadow_color=self.title_shadow_color,
-                title_shadow_offset=(0, 2),
-                overlay_template_path=self.overlay_template_path if self._exists(self.overlay_template_path) else None,
-            )
-        else:
-            cover_path = normalize_for_instagram_premium_v2_card(
-                primary,
-                output_filename=f"{content_key}_00.jpg",
-                folder=str(self.settings.formatted_image_dir),
-                target_size=self.target_size,
-                title_text=title_text,
-                kicker_text=kicker_text,
-                content_theme=visual_theme,
-                title_font_path=self.title_font_path if self._exists(self.title_font_path) else None,
-                title_color=self.title_color,
-                title_shadow_color=self.title_shadow_color,
-                overlay_template_path=self.overlay_template_path if self._exists(self.overlay_template_path) else None,
-            )
-        if not cover_path or not Path(cover_path).exists():
-            raise RuntimeError(f"{content_key} no genero portada NA")
-
-        news_payload = raw_payload if raw_payload else self._fallback_news_payload(row)
-        raw_news_text = build_raw_news_text(news_payload)
-        carousel_paths = create_instagram_carousel_from_news(
-            cover_path,
-            raw_news_text,
-            str(self.settings.formatted_image_dir),
-            content_key,
-        )
-        if not carousel_paths:
-            raise RuntimeError(f"{content_key} no genero carrusel NA")
-        return [
-            Asset(
-                kind="image",
-                path=path,
-                meta={"role": "cover" if index == 0 else "carousel"},
-            )
-            for index, path in enumerate(carousel_paths)
         ]
 
     def _ensure_local_image(
@@ -975,46 +874,6 @@ class AssetFormatter:
         clean = re.sub(r"#[\w_]+", "", clean)
         return re.sub(r"\s+", " ", clean).strip()
 
-    def _prepare_na_source_with_black_box(self, image_path: str, content_key: str) -> str:
-        if not image_path or not Path(image_path).exists():
-            return image_path
-        ext = Path(image_path).suffix or ".jpg"
-        temp_path = self.temp_dir / f"{content_key}_na_box{ext}"
-        try:
-            shutil.copy2(image_path, temp_path)
-            self._apply_na_black_box(temp_path)
-            return str(temp_path)
-        except Exception:
-            return image_path
-
-    @staticmethod
-    def _apply_na_black_box(image_path: Path) -> None:
-        try:
-            from PIL import Image, ImageDraw
-
-            with Image.open(image_path) as base:
-                if base.mode != "RGBA":
-                    base = base.convert("RGBA")
-                width, height = base.size
-                box_w = int(width * 0.42)
-                box_h = int(height * 0.18)
-                draw = ImageDraw.Draw(base)
-                draw.rectangle([0, height - box_h, box_w, height], fill=(0, 0, 0))
-                base.convert("RGB").save(image_path, quality=95)
-        except Exception:
-            return
-
-    @staticmethod
-    def _fallback_news_payload(row: Dict[str, object]) -> Dict[str, object]:
-        body_text = str(row.get("body_text") or "").strip()
-        paragraphs = [part.strip() for part in body_text.splitlines() if part.strip()]
-        return {
-            "titulo": str(row.get("title") or ""),
-            "extracto": str(row.get("summary") or ""),
-            "parrafos": paragraphs,
-            "url": str(row.get("canonical_url") or ""),
-        }
-
     @staticmethod
     def _validate_package(package: FormattedPackage, *, dry_run: bool) -> None:
         if not package.content_key:
@@ -1025,8 +884,10 @@ class AssetFormatter:
             raise RuntimeError(f"{package.content_key} no tiene assets formateados")
         if package.post_type == "reel" and not any(asset.kind == "video" for asset in package.assets):
             raise RuntimeError(f"{package.content_key} reel sin video final")
-        if package.post_type in {"carousel", "image"} and not any(asset.kind == "image" for asset in package.assets):
+        if package.post_type == "image" and not any(asset.kind == "image" for asset in package.assets):
             raise RuntimeError(f"{package.content_key} post de imagen sin imagen final")
+        if package.post_type == "carousel" and len(package.assets) < 2:
+            raise RuntimeError(f"{package.content_key} carrusel con menos de dos elementos")
         if dry_run:
             return
 

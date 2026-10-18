@@ -32,3 +32,9 @@ os.environ["DUO_MOTION_ENGINE"] = "0"
 import tempfile as _tempfile
 
 os.environ["DUO_RATE_LIMITS_PATH"] = os.path.join(_tempfile.mkdtemp(prefix="duo_rl_"), "meta_rate_limits.json")
+
+# Ningun test escribe en la base real: SQLITE_PATH vacio (tiene prioridad en settings) y una base
+# temporal por defecto. Los tests que necesitan su propia base siguen fijando DUO_DB_PATH.
+os.environ["SQLITE_PATH"] = ""
+os.environ["DUO_DB_PATH"] = os.path.join(_tempfile.mkdtemp(prefix="duo_db_"), "duo_test.sqlite3")
+os.environ["X_VIDEO_FEED_STATE_PATH"] = os.path.join(_tempfile.mkdtemp(prefix="duo_xfeed_"), "x_video_feed_state.json")

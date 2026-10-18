@@ -873,8 +873,12 @@ class MetaGraphPublisher:
         fb_token = self._get_fb_publish_token()
         if not (fb_token and page_id):
             return None
-        if package.post_type == "reel":
-            video = next(asset for asset in package.assets if asset.kind == "video")
+        videos = [asset for asset in package.assets if asset.kind == "video"]
+        if package.post_type == "reel" or (package.post_type == "carousel" and videos):
+            # La API de paginas no publica carruseles de video: un carrusel de dos tramos
+            # (0-60 / 60-120) va a Facebook como un video con el primer tramo y el mismo caption.
+            index = int(package.meta.get("facebook_video_index") or 0) if package.post_type == "carousel" else 0
+            video = videos[min(index, len(videos) - 1)]
             media_url = self._asset_media_url(video)
             payload = self._request(
                 "POST",
@@ -882,6 +886,7 @@ class MetaGraphPublisher:
                 data={"file_url": media_url, "description": package.caption},
                 access_token=fb_token,
             )
+            note = {"note": "carrusel de video publicado en Facebook como el primer tramo"} if package.post_type == "carousel" else {}
             return PublicationRecord(
                 platform="facebook",
                 status="published",
@@ -892,7 +897,7 @@ class MetaGraphPublisher:
                 scheduled_for=scheduled_for,
                 published_at=self._utc_now(),
                 mode="live",
-                payload={},
+                payload=note,
             )
         if package.post_type == "image":
             image = next(asset for asset in package.assets if asset.kind == "image")

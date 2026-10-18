@@ -126,6 +126,29 @@ def content_from_raw(
             continue
         seen.add(candidate)
         assets.append(Asset(kind="video", path="" if candidate.startswith("http") else candidate, remote_url=candidate if candidate.startswith("http") else ""))
+    # Candidatos tipados de extractors/news/media.py (portada, cuerpo, tuits, reproductores).
+    for item in raw.get("video_candidates") or []:
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("url") or "").strip()
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        duration = item.get("duration_seconds")
+        assets.append(
+            Asset(
+                kind="video",
+                remote_url=url,
+                duration_seconds=float(duration) if duration else None,
+                meta={
+                    "video_kind": str(item.get("kind") or ""),
+                    "location": str(item.get("location") or ""),
+                    "provider": str(item.get("provider") or ""),
+                    "poster": str(item.get("poster") or ""),
+                    **{k: v for k, v in dict(item.get("meta") or {}).items() if k in {"media_id", "title", "content_id"}},
+                },
+            )
+        )
 
     media_type = "video" if any(asset.kind == "video" for asset in assets) else "image"
     if media_type == "image" and len([asset for asset in assets if asset.kind == "image"]) > 1:
@@ -164,6 +187,11 @@ def content_from_raw(
             "paragraph_count": len([part for part in body_text.splitlines() if part.strip()]),
             "asset_count": len(assets),
             "has_video": any(asset.kind == "video" for asset in assets),
+            "video_candidates": len([asset for asset in assets if asset.kind == "video"]),
+            "duration_seconds": next(
+                (asset.duration_seconds for asset in assets if asset.kind == "video" and asset.duration_seconds),
+                None,
+            ),
         },
         raw_payload=raw,
         assets=assets,

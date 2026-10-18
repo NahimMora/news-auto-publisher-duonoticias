@@ -1,10 +1,16 @@
-"""El Tribuno de Salta extractor — adapted from HolaSalta scraper pattern."""
+"""El Tribuno de Salta: articulo, imagen principal y video (reproductor onvideo.news).
+
+Candidatos desde el feed ``/feed`` (o la seccion /salta si falla). El detalle se
+lee de la pagina canonica: el video aparece como iframe ``api.onvideo.news`` en
+la portada (``.articulo__media``) o dentro del cuerpo (``.articulo__cuerpo``).
+Las fotos propias suelen llevar la marca de agua "El Tribuno": la politica de
+marcas de agua (``utils/watermark.py``) decide despues si la nota sigue.
+"""
 from __future__ import annotations
 
-import contextlib
 import re
 from typing import Dict, List, Optional
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
 
@@ -17,54 +23,42 @@ from extractors.news.html_scraper import (
     fetch_html,
     normalize_article_url,
 )
-from extractors.news.common import normalize_url, strip_html
+from extractors.news.media import dedupe_candidates, videos_in_container
 from storage.settings import PipelineSettings
 
 # URL pattern: /section/YYYY-M-D-H-M-S-slug
-_ARTICLE_RE = re.compile(
-    r"/[^/]+/\d{4}-\d{1,2}-\d{1,2}-\d{1,2}-\d{1,2}-\d{1,2}-[^/?#]+$"
-)
+_ARTICLE_RE = re.compile(r"/[^/]+/\d{4}-\d{1,2}-\d{1,2}-\d{1,2}-\d{1,2}-\d{1,2}-[^/?#]+$")
 _TEXT_EXCLUDE = (
     "suscribite", "seguinos", "publicidad", "compartir", "galería", "video:",
     "anticipo", "suscripción", "tags:", "etiquetas:", "última hora",
     "notas relacionadas", "más leídas", "últimas noticias",
 )
-_IMAGE_EXCLUDE = ("logo", "banner", "publicidad", "icon", "favicon", "tracking")
+_CDN_RE = re.compile(r"https://uscdn\.eltribuno\.com/\d+/\d+\.(?:webp|jpe?g|png)")
+
+
+def jpeg_variant(url: str) -> str:
+    """El CDN entrega JPEG con ``extw=jpg``; la URL pelada no siempre es descargable."""
+    match = _CDN_RE.match(url or "")
+    if not match:
+        return url
+    return f"{match.group(0)}?cw=1200&ch=675&extw=jpg"
 
 
 class ElTribunoExtractor(HtmlNewsExtractor):
     source = "eltribuno"
     base_url = "https://www.eltribuno.com"
     category = "salta"
-    rss_feeds = [
-        "https://www.eltribuno.com/salta/rss.xml",
-        "https://www.eltribuno.com/rss.xml",
-        "https://www.eltribuno.com/feed",
-    ]
+    rss_feeds = ["https://www.eltribuno.com/feed"]
     article_url_patterns = [_ARTICLE_RE.pattern]
     article_url_exclude = [
         "tag/", "/tags/", "/autor/", "/newsletter", "/#",
-        "/video/", "/fotos/", "/galeria/",
-    ]
-    article_body_selectors = [
-        ".articulo__cuerpo",
-        ".articulo__body",
-        "article .content",
-        ".nota-cuerpo",
-        "article",
-    ]
-    homepage_card_selectors = [
-        ".nota a[href]",
-        "article a[href]",
-        "h2 a[href]",
-        "h3 a[href]",
+        "/fotos/", "/galeria/",
     ]
 
     def __init__(self, settings: Optional[PipelineSettings] = None) -> None:
         super().__init__(settings)
 
     def _homepage_candidates(self, limit: int) -> List[Dict]:
-        """Try /salta section first, then homepage."""
         for url in (f"{self.base_url}/salta", self.base_url):
             html = fetch_html(url, referer=self.base_url)
             if not html:
@@ -86,12 +80,7 @@ class ElTribunoExtractor(HtmlNewsExtractor):
             if not title:
                 continue
             seen.add(url)
-            rows.append({
-                "id": url,
-                "url": url,
-                "titulo": title,
-                "extracto": self._pick_extracto(node, title),
-            })
+            rows.append({"id": url, "url": url, "titulo": title, "extracto": self._pick_extracto(node, title)})
             if len(rows) >= limit:
                 break
         return rows
@@ -122,16 +111,17 @@ class ElTribunoExtractor(HtmlNewsExtractor):
         return ""
 
     def _article_detail(self, url: str, title_hint: str = "") -> Dict:
-        amp_url = f"{url.rstrip('/')}/amp"
         best: Optional[Dict] = None
-        for candidate in (amp_url, url):
+        for candidate in (url, f"{url.rstrip('/')}/amp"):
             html = fetch_html(candidate, referer=self.base_url)
             if not html:
                 continue
             result = self._parse_article_html(html, url, title_hint)
             if best is None or len(result.get("parrafos") or []) > len(best.get("parrafos") or []):
+                if best and best.get("video_candidates") and not result.get("video_candidates"):
+                    result["video_candidates"] = best["video_candidates"]
                 best = result
-            if len(result.get("parrafos") or []) >= 3 and candidate.endswith("/amp"):
+            if len(result.get("parrafos") or []) >= 3:
                 break
         return best or {}
 
@@ -150,26 +140,37 @@ class ElTribunoExtractor(HtmlNewsExtractor):
                 meta = soup.find("meta", property="og:description")
                 extracto = clean_text(str((meta or {}).get("content") or ""))
 
+        media = soup.select_one(".articulo__media")
         body = soup.select_one(".articulo__cuerpo") or soup.select_one(".articulo__body")
+        videos = dedupe_candidates(
+            videos_in_container(media, self.base_url, location="cover")
+            + videos_in_container(body, self.base_url, location="body")
+        )
         parrafos = self._extract_body_paragraphs(body, extracto, title)
 
-        image_url = extract_og_image(soup, self.base_url)
-        if not image_url:
-            img = soup.select_one(".articulo__media img[src], figure img[src]")
-            if img:
-                image_url = normalize_url(str(img.get("src") or ""), self.base_url)
+        images: List[str] = []
+        for img in (media.select("amp-img[src], img[src]") if media else []):
+            src = str(img.get("src") or "")
+            if _CDN_RE.match(src) and jpeg_variant(src) not in images:
+                images.append(jpeg_variant(src))
+        if not images:
+            og = extract_og_image(soup, self.base_url)
+            if og:
+                images.append(jpeg_variant(og))
 
         published = extract_published_date(soup, json_ld)
         if not published:
-            match = re.search(r"/(\d{4})-(\d{1,2})-(\d{1,2})-", url)
+            match = re.search(r"/(\d{4})-(\d{1,2})-(\d{1,2})-(\d{1,2})-(\d{1,2})-", url)
             if match:
-                published = f"{match.group(1)}-{match.group(2).zfill(2)}-{match.group(3).zfill(2)}"
+                y, mo, d, h, mi = match.groups()
+                published = f"{y}-{mo.zfill(2)}-{d.zfill(2)}T{h.zfill(2)}:{mi.zfill(2)}:00-03:00"
 
         return {
             "titulo": title,
             "extracto": extracto,
             "parrafos": parrafos,
-            "imagenes_url": [image_url] if image_url else [],
+            "imagenes_url": images[:6],
+            "video_candidates": [candidate.as_dict() for candidate in videos],
             "fecha_publicacion": published,
         }
 
@@ -193,7 +194,7 @@ class ElTribunoExtractor(HtmlNewsExtractor):
                 continue
             paragraphs.append(text)
             seen.add(low)
-            if len(paragraphs) >= 8:
+            if len(paragraphs) >= 12:
                 break
         return paragraphs or ([extracto] if extracto else [])
 

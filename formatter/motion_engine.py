@@ -59,19 +59,17 @@ THEME_TO_CATEGORY = {
     "sensitive": "policiales",
 }
 
+# Nombre visible de la fuente en el diseno (la atribucion va en el layout, no en el caption).
 SOURCE_NAMES = {
     "eltribuno": "El Tribuno",
-    "nuevodiariodesalta": "Nuevo Diario de Salta",
-    "fiscalespenalesalta": "Ministerio Público Fiscal de Salta",
-    "justiciasalta": "Poder Judicial de Salta",
+    "informatesalta": "Informate Salta",
+    "quepasasalta": "Qué Pasa Salta",
+    "gobiernosalta": "Gobierno de Salta",
+    "policiasalta": "Policía de Salta",
+    "municipalidadsalta": "Municipalidad de Salta",
     "paparazzi": "Paparazzi",
     "tn": "TN",
     "infobae": "Infobae",
-    "noticiasargentinas": "Noticias Argentinas",
-    "minutouno": "Minuto Uno",
-    "elonce": "Elonce",
-    "ambitofinanciero": "Ámbito",
-    "holasalta": "Hola Salta",
 }
 
 URGENT_HINTS = ("urgente", "ultimo momento", "último momento", "ahora:", "confirmaron", "alerta")
@@ -79,11 +77,11 @@ URGENT_HINTS = ("urgente", "ultimo momento", "último momento", "ahora:", "confi
 
 @dataclass
 class MotionConfig:
+    """Los reels salen solo de video real: no hay modo de foto animada (retirado 2026-10)."""
+
     enabled: bool
     node: str
     motion_dir: Path
-    photo_reel_modes: set[str]
-    photo_reel_seconds: int
     max_reel_seconds: int
     render_timeout_seconds: int
     inbox: bool
@@ -93,13 +91,10 @@ class MotionConfig:
         def flag(name: str, default: str) -> bool:
             return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
 
-        modes = {m.strip().lower() for m in os.getenv("DUO_MOTION_PHOTO_REELS", "breaking,data").split(",") if m.strip()}
         return cls(
             enabled=flag("DUO_MOTION_ENGINE", "1"),
             node=os.getenv("DUO_MOTION_NODE", "node").strip() or "node",
             motion_dir=Path(os.getenv("DUO_MOTION_DIR", str(base_dir / "motion"))),
-            photo_reel_modes=set() if "off" in modes else modes,
-            photo_reel_seconds=int(os.getenv("DUO_MOTION_PHOTO_REEL_SECONDS", "14")),
             max_reel_seconds=int(os.getenv("DUO_MOTION_MAX_REEL_SECONDS", "180")),
             render_timeout_seconds=int(os.getenv("DUO_MOTION_TIMEOUT_SECONDS", "300")),
             inbox=flag("DUO_MOTION_INBOX", "1"),
@@ -483,26 +478,23 @@ class MotionEngine:
             content["source"].pop("url")
         return content
 
-    def wants_photo_reel(self, brief: VisualBrief) -> Optional[str]:
-        modes = self.config.photo_reel_modes
-        if not modes:
-            return None
-        if ("data" in modes or "all" in modes) and len(brief.stats) >= 2:
-            return "data"
-        if ("breaking" in modes or "all" in modes) and brief.breaking:
-            return "breaking"
-        if "all" in modes:
-            return "editorial"
-        return None
-
     # -- render -------------------------------------------------------------
 
-    def render_reel(self, content_key: str, content: Dict[str, Any], template: str, out_path: Path) -> Dict[str, Any]:
+    def render_reel(
+        self,
+        content_key: str,
+        content: Dict[str, Any],
+        template: str,
+        out_path: Path,
+        *,
+        seconds: Optional[float] = None,
+    ) -> Dict[str, Any]:
         video = (content.get("videos") or [None])[0]
-        if video and video.get("durationSeconds"):
-            seconds = min(float(video["durationSeconds"]), float(self.config.max_reel_seconds))
-        else:
-            seconds = float(self.config.photo_reel_seconds)
+        if not video or not video.get("src"):
+            raise MotionRenderError("reel sin video real: no se generan reels de fotos")
+        if seconds is None:
+            seconds = float(video.get("durationSeconds") or self.config.max_reel_seconds)
+        seconds = min(float(seconds), float(self.config.max_reel_seconds))
         piece = {
             "content": content,
             "presentation": {

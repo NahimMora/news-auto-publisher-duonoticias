@@ -13,8 +13,9 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from utils.http_client import HttpClient
 
@@ -50,6 +51,16 @@ class LLMConfig:
         return "GEMINI_API_KEY" if self.provider == "gemini" else "OPENAI_API_KEY"
 
 
+@dataclass
+class LLMUsage:
+    """Consumo real informado por el proveedor (None si no lo informa)."""
+
+    model: str
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    latency_ms: int = 0
+
+
 def llm_config_from_env() -> LLMConfig:
     provider = (os.getenv("LLM_PROVIDER") or "gemini").strip().lower()
     if provider == "openai":
@@ -78,20 +89,50 @@ def generate_text(
     timeout: float = 90.0,
     config: Optional[LLMConfig] = None,
 ) -> str:
+    return generate_text_with_usage(
+        system_prompt,
+        user_prompt,
+        temperature=temperature,
+        max_output_tokens=max_output_tokens,
+        json_output=json_output,
+        timeout=timeout,
+        config=config,
+    )[0]
+
+
+def generate_text_with_usage(
+    system_prompt: str,
+    user_prompt: str,
+    *,
+    temperature: float = 0.7,
+    max_output_tokens: int = 900,
+    json_output: bool = False,
+    timeout: float = 90.0,
+    config: Optional[LLMConfig] = None,
+    response_schema: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, LLMUsage]:
     cfg = config or llm_config_from_env()
     if not cfg.ready:
         raise LLMError(f"Missing {cfg.api_key_env}")
+    started = time.monotonic()
     if cfg.provider == "openai":
-        return _openai(cfg, system_prompt, user_prompt, temperature, max_output_tokens, timeout)
-    return _gemini(cfg, system_prompt, user_prompt, temperature, max_output_tokens, json_output, timeout)
+        text, usage = _openai(cfg, system_prompt, user_prompt, temperature, max_output_tokens, timeout)
+    else:
+        text, usage = _gemini(cfg, system_prompt, user_prompt, temperature, max_output_tokens, json_output, timeout, response_schema)
+    usage.latency_ms = int((time.monotonic() - started) * 1000)
+    return text, usage
 
 
 def generate_json(system_prompt: str, user_prompt: str, **kwargs: Any) -> Dict[str, Any]:
-    text = generate_text(system_prompt, user_prompt, json_output=True, **kwargs)
+    return generate_json_with_usage(system_prompt, user_prompt, **kwargs)[0]
+
+
+def generate_json_with_usage(system_prompt: str, user_prompt: str, **kwargs: Any) -> Tuple[Dict[str, Any], LLMUsage]:
+    text, usage = generate_text_with_usage(system_prompt, user_prompt, json_output=True, **kwargs)
     parsed = parse_json_object(text)
     if parsed is None:
         raise LLMError("Respuesta IA invalida: sin objeto JSON")
-    return parsed
+    return parsed, usage
 
 
 def parse_json_object(text: str) -> Optional[Dict[str, Any]]:
@@ -140,10 +181,13 @@ def _gemini(
     max_output_tokens: int,
     json_output: bool,
     timeout: float,
-) -> str:
+    response_schema: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, LLMUsage]:
     generation_config: Dict[str, Any] = {"temperature": temperature, "maxOutputTokens": max_output_tokens}
     if json_output:
         generation_config["responseMimeType"] = "application/json"
+    if response_schema:
+        generation_config["responseSchema"] = response_schema
     if cfg.thinking_level:
         generation_config["thinkingConfig"] = {"thinkingLevel": cfg.thinking_level}
     payload: Dict[str, Any] = {
@@ -163,7 +207,16 @@ def _gemini(
             reason = str(candidates[0].get("finishReason") or "")
         block = (data.get("promptFeedback") or {}).get("blockReason") or ""
         raise LLMError(f"Gemini sin texto (finishReason={reason or '-'} blockReason={block or '-'})")
-    return text
+    meta = data.get("usageMetadata") or {}
+    output = None
+    if meta.get("candidatesTokenCount") is not None or meta.get("thoughtsTokenCount") is not None:
+        output = int(meta.get("candidatesTokenCount") or 0) + int(meta.get("thoughtsTokenCount") or 0)
+    usage = LLMUsage(
+        model=cfg.model,
+        input_tokens=int(meta["promptTokenCount"]) if meta.get("promptTokenCount") is not None else None,
+        output_tokens=output,
+    )
+    return text, usage
 
 
 def extract_gemini_text(data: Dict[str, Any]) -> str:
@@ -182,7 +235,7 @@ def _openai(
     temperature: float,
     max_output_tokens: int,
     timeout: float,
-) -> str:
+) -> Tuple[str, LLMUsage]:
     payload = {
         "model": cfg.model,
         "temperature": temperature,
@@ -194,12 +247,14 @@ def _openai(
     }
     headers = {"Authorization": f"Bearer {cfg.api_key}", "Content-Type": "application/json"}
     data = _post(cfg.base_url, headers, payload, timeout)
+    meta = data.get("usage") or {}
+    usage = LLMUsage(model=cfg.model, input_tokens=meta.get("input_tokens"), output_tokens=meta.get("output_tokens"))
     direct = str(data.get("output_text") or "").strip()
     if direct:
-        return direct
+        return direct, usage
     chunks = []
     for item in data.get("output") or []:
         for block in item.get("content") or []:
             if block.get("type") == "output_text" and block.get("text"):
                 chunks.append(block["text"])
-    return "\n".join(chunks).strip()
+    return "\n".join(chunks).strip(), usage

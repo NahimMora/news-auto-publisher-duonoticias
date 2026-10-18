@@ -15,7 +15,7 @@ const WINDOW_FADE_SOFT: React.CSSProperties = {
 };
 import { Grain } from "./brand";
 
-export type StageCut = "punch" | "slash";
+export type StageCut = "punch" | "slash" | "fade";
 
 type Props = {
   content: Content;
@@ -37,6 +37,13 @@ type Props = {
   windowIntro?: { startFrame: number };
   /** Fondo cuando no hay ninguna imagen. */
   emptyBackground?: string;
+  /**
+   * Franja de foto: las fotos (no los videos) llenan este rectangulo a todo el
+   * ancho, recortadas, y se funden abajo con `bandBackground`. Camara fija con
+   * zoom lento, sin desplazamientos: el borde de la imagen nunca queda a la vista.
+   */
+  band?: { top: number; height: number; fade?: number };
+  bandBackground?: string;
 };
 
 /** Recorte lateral maximo tolerado al agrandar una imagen apaisada. */
@@ -66,7 +73,7 @@ const windowGeometry = (
  * con camara virtual continua. Las escenas de texto se montan encima. Cambia
  * de foto en cada bloque (corte seco con destello o barrida diagonal).
  */
-export const MediaStage: React.FC<Props> = ({ content, plan, layout, cut, accent, windowCenter = 0.4, windowRect, windowIntro, emptyBackground }) => {
+export const MediaStage: React.FC<Props> = ({ content, plan, layout, cut, accent, windowCenter = 0.4, windowRect, windowIntro, emptyBackground, band, bandBackground }) => {
   const { width, height, fps } = useVideoConfig();
   const frame = useCurrentFrame();
   // 0 = pantalla completa, 1 = ventana final.
@@ -90,7 +97,12 @@ export const MediaStage: React.FC<Props> = ({ content, plan, layout, cut, accent
     const { top, height: vh } = withIntro(windowGeometry(video, width, height, windowCenter, layout.safeTop, windowRect));
     return (
       <AbsoluteFill style={{ background: brand.colors.primaryDeep }}>
-        <StagePattern accent={accent} />
+        {/* Fondo: el mismo video ampliado, desenfocado y teñido (llena el cuadro sin recortar el original) */}
+        <AbsoluteFill style={{ filter: "blur(40px) saturate(1.1)", scale: "1.35" }}>
+          <VideoLayer clip={{ ...video, keepAudio: false }} />
+        </AbsoluteFill>
+        <AbsoluteFill style={{ background: "rgba(30,13,51,0.5)" }} />
+        <StagePattern accent={accent} opacity={0.06} />
         <div style={{ position: "absolute", left: 0, right: 0, top, height: vh, overflow: "hidden", ...WINDOW_FADE_SOFT }}>
           <CinematicZoom from={1} to={1 + (cfg.cameraZoom - 1) * 0.4}>
             <VideoLayer clip={video} />
@@ -109,6 +121,8 @@ export const MediaStage: React.FC<Props> = ({ content, plan, layout, cut, accent
       </AbsoluteFill>
     );
   }
+
+  if (band) return <PhotoBand content={content} plan={plan} cut={cut} accent={accent} band={band} background={bandBackground ?? brand.colors.ink} />;
 
   // Segmentos: el primero arranca en 0 (incluye el gancho).
   const segments = plan.beats.map((b, i) => ({
@@ -153,6 +167,59 @@ export const MediaStage: React.FC<Props> = ({ content, plan, layout, cut, accent
       })}
     </AbsoluteFill>
   );
+};
+
+/** Franja de foto (ver Props.band). Una foto = un solo plano continuo. */
+const PhotoBand: React.FC<{
+  content: Content;
+  plan: TimelinePlan;
+  cut: StageCut;
+  accent: string;
+  band: { top: number; height: number; fade?: number };
+  background: string;
+}> = ({ content, plan, cut, accent, band, background }) => {
+  const { fps } = useVideoConfig();
+  // Tramos por foto: bloques seguidos con la misma foto son un solo plano.
+  const runs: Array<{ start: number; end: number; photoIndex: number }> = [];
+  plan.beats.forEach((b, i) => {
+    const photoIndex = content.photos.length > 1 ? b.photoIndex : 0;
+    const start = i === 0 ? 0 : b.start;
+    const last = runs[runs.length - 1];
+    if (last && last.photoIndex === photoIndex) return;
+    if (last) last.end = start;
+    runs.push({ start, end: plan.total, photoIndex });
+  });
+  const overlap = cut === "punch" ? 0 : Math.round(0.6 * fps);
+  const fade = band.fade ?? 0.3;
+  const topFade = band.top > 0 ? "transparent 0%, #000 8%," : "#000 0%,";
+  const mask = `linear-gradient(to bottom, ${topFade} #000 ${Math.round((1 - fade) * 100)}%, transparent 100%)`;
+  return (
+    <AbsoluteFill style={{ background }}>
+      <div style={{ position: "absolute", left: 0, right: 0, top: band.top, height: band.height, overflow: "hidden", maskImage: mask, WebkitMaskImage: mask }}>
+        {runs.map((run, i) => {
+          const photo = content.photos[run.photoIndex] ?? content.photos[0];
+          const duration = run.end - run.start + (i < runs.length - 1 ? overlap : 0);
+          const body = (
+            <CinematicZoom from={1.02} to={1.12} focus={photo.focus ?? { x: 0.5, y: 0.42 }} durationFrames={duration}>
+              <PhotoLayer photo={photo} />
+            </CinematicZoom>
+          );
+          return (
+            <Sequence key={i} from={run.start} durationInFrames={duration} name={`Foto ${i + 1}`}>
+              {i > 0 && cut === "slash" ? <MaskWipe duration={0.6}>{body}</MaskWipe> : i > 0 && cut === "fade" ? <FadeIn>{body}</FadeIn> : <AbsoluteFill>{body}</AbsoluteFill>}
+              {i > 0 && cut === "punch" ? <CutFlash color={accent} /> : null}
+            </Sequence>
+          );
+        })}
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+const FadeIn: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  return <AbsoluteFill style={{ opacity: interpolate(frame, [0, 0.6 * fps], [0, 1], { extrapolateRight: "clamp" }) }}>{children}</AbsoluteFill>;
 };
 
 /** Destello de 2 frames en el corte (urgencia). */

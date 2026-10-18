@@ -2,7 +2,9 @@
 
 ## Commands
 - **Doctor**: `python -m cli.main doctor`
-- **Run one safe cycle**: `python -m cli.main run-once --safe-mode`
+- **Simulated hourly cycle (never publishes, separate DB)**: `python -m cli.main simulate --max-news 15`
+- **One cycle on the real DB (no publish without --live)**: `python -m cli.main cycle`
+- **Gemini usage**: `python -m cli.main llm-usage --hours 24`
 - **Dry run**: `python -m cli.main dry-run`
 - **24/7 loop**: `python -m cli.main run-24-7`
 - **Live gate**: `python -m cli.main preflight` (exit 1 if live publishing cannot work)
@@ -15,9 +17,9 @@
 
 ## Architecture
 - **cli/main.py**: Single runtime entrypoint for SQLite 24/7 pipeline
-- **jobs/pipeline.py**: Scraper → Scoring → Editorial → Formatter → Scheduler → Publisher → Analytics → Growth
-- **extractors/**: Source registry, Paparazzi/TN/X extraction
-- **utils/**: Core modules (OpenAI captioner, image/video processing, Instagram Graph API publisher, FAISS dedup)
+- **jobs/pipeline.py**: hourly `run_cycle`: recover → expire → scrape → policy → events → watermark → relevance (Gemini batches) → queue (12 h) → allocation (6/2/2/2, max 12) → media → caption → format → validate → publish
+- **extractors/**: Source registry (config/sources.yaml), per-source extractors, `news/media.py` video detection, HolaSalta X feed
+- **utils/**: media_resolver (verified downloads), watermark, video_clips, llm_client, image/video processing
 - **motion/**: Duo Motion visual engine (Remotion templates, hooks, animation library, Next.js editorial panel, render worker). `formatter/motion_engine.py` is the pipeline adapter; the legacy Pillow/ffmpeg formatter (`utils/image_processor.py`, `video_app/`) is the automatic fallback
 - **video_app/**: Legacy video overlay/subtitle engines (fallback only)
 - **data/**: JSON outputs, history, FAISS index, media files

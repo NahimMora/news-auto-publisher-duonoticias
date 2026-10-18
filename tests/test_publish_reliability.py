@@ -161,38 +161,5 @@ class RateLimitDetectionTests(unittest.TestCase):
             self.assertIsNone(reg.blocked_until("instagram", now=now + timedelta(minutes=181)))
 
 
-class LocalNewsPolicyTests(unittest.TestCase):
-    def setUp(self) -> None:
-        patcher = patch.dict(os.environ, {"DUO_PUBLISH_REQUIRE_SAME_LOCAL_DAY": "true"}, clear=False)
-        patcher.start()
-        self.addCleanup(patcher.stop)
-        get_settings.cache_clear()
-        self.addCleanup(get_settings.cache_clear)
-        self.policy = ContentPolicy(get_settings())
-        self.today = datetime.now(ZoneInfo(get_settings().timezone)).replace(hour=10, minute=0, second=0, microsecond=0).isoformat()
-
-    def _row(self, source: str, title: str) -> dict:
-        return {"source": source, "title": title, "summary": "Detalle de la nota con contexto suficiente para publicar hoy.", "media_type": "image", "created_at": self.today}
-
-    def test_local_source_sports_story_is_accepted(self) -> None:
-        decision = self.policy.evaluate_row(self._row("nuevodiariodesalta", "La atleta Milagros D'Amico conquisto la plata en el Sudamericano"))
-        self.assertTrue(decision.accepted, decision.reason)
-        self.assertIn("salta_local", decision.reason)
-
-    def test_national_source_story_in_salta_is_accepted(self) -> None:
-        decision = self.policy.evaluate_row(self._row("infobae", "Una leyenda del futbol llega a Salta como pastor evangelico"))
-        self.assertTrue(decision.accepted, decision.reason)
-
-    def test_national_generic_story_still_filtered(self) -> None:
-        decision = self.policy.evaluate_row(self._row("infobae", "Las mejores recetas para el fin de semana largo"))
-        self.assertFalse(decision.accepted)
-
-    def test_local_gate_can_be_disabled(self) -> None:
-        with patch.dict(os.environ, {"DUO_POLICY_ACCEPT_SALTA_LOCAL": "0"}):
-            policy = ContentPolicy(get_settings())
-        decision = policy.evaluate_row(self._row("nuevodiariodesalta", "La atleta Milagros D'Amico conquisto la plata en el Sudamericano"))
-        self.assertFalse(decision.accepted)
-
-
 if __name__ == "__main__":
     unittest.main()

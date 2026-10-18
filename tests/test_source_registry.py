@@ -1,71 +1,46 @@
 from __future__ import annotations
 
-import os
-import tempfile
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
 from extractors.registry import SourceRegistry
 from storage.settings import get_settings
 
+ACTIVE = {"eltribuno", "informatesalta", "quepasasalta", "gobiernosalta", "policiasalta", "municipalidadsalta", "paparazzi", "tn", "infobae"}
+REMOVED = {"nuevodiariodesalta", "fiscalespenalesalta", "justiciasalta", "noticiasargentinas", "minutouno", "elonce", "ambitofinanciero", "ariesonline", "eloncesalta"}
+
 
 class SourceRegistryTests(unittest.TestCase):
-    def tearDown(self) -> None:
+    def setUp(self) -> None:
         get_settings.cache_clear()
+        self.registry = SourceRegistry(get_settings())
 
-    def test_scan_source_uses_configured_max_items_when_not_provided(self) -> None:
-        # Isolated config: the real sources.yaml sets its own max_items_per_scan per source.
-        with tempfile.TemporaryDirectory(prefix="duo_sources_") as tmp_dir:
-            config_path = Path(tmp_dir) / "sources.yaml"
-            config_path.write_text(
-                "sources:\n  - name: tn\n    enabled: true\n    parser: rss_html\n    base_url: https://tn.com.ar\n",
-                encoding="utf-8",
-            )
-            with patch.dict(
-                os.environ,
-                {
-                    "DUO_SCRAPE_DEFAULT_MAX_ITEMS_PER_SOURCE": "10",
-                    "DUO_SOURCES_CONFIG": str(config_path),
-                },
-                clear=False,
-            ):
-                get_settings.cache_clear()
-                registry = SourceRegistry(get_settings())
-                with patch("extractors.registry.RssHtmlNewsExtractor.scan", return_value=[]) as mocked:
-                    registry.scan_source("tn")
+    def test_only_active_sources_are_scanned(self) -> None:
+        names = set(self.registry.enabled_source_names())
+        self.assertEqual(names, ACTIVE)
+        self.assertFalse(names & REMOVED)
+        self.assertNotIn("x", names)  # los videos de X llegan solo por el intercambio de HolaSalta
 
-        self.assertEqual(mocked.call_args.kwargs["max_items"], 10)
+    def test_removed_sources_return_nothing(self) -> None:
+        for source in REMOVED | {"x"}:
+            self.assertEqual(self.registry.scan_source(source), [], source)
 
-    def test_settings_load_x_handles_from_sources_yaml_when_env_is_missing(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="duo_sources_") as tmp_dir:
-            config_path = Path(tmp_dir) / "sources.yaml"
-            config_path.write_text(
-                "\n".join(
-                    [
-                        "sources:",
-                        "  - name: x",
-                        "    enabled: true",
-                        "    handles:",
-                        "      - https://x.com/TTendenciaX",
-                        "      - https://x.com/home?lang=es",
-                        "      - https://x.com/ceciarmy",
-                    ]
-                ),
-                encoding="utf-8",
-            )
-            with patch.dict(
-                os.environ,
-                {
-                    "DUO_SOURCES_CONFIG": str(config_path),
-                    "X_SOURCES": "",
-                },
-                clear=False,
-            ):
-                get_settings.cache_clear()
-                settings = get_settings()
+    def test_groups_and_video_rules(self) -> None:
+        config = self.registry.config
+        self.assertEqual({s for s in ACTIVE if config.group_of(s) == "local"}, {"eltribuno", "informatesalta", "quepasasalta", "gobiernosalta", "policiasalta", "municipalidadsalta"})
+        self.assertEqual(config.group_of("tn"), config.group_of("infobae"))
+        self.assertEqual(config.group_of("tn"), "national")
+        for source in ("tn", "infobae", "paparazzi"):
+            self.assertTrue(config.requires_video(source), source)
+        self.assertTrue(config.is_official("policiasalta"))
+        self.assertGreater(config.threshold_for("gobiernosalta"), config.threshold_for("eltribuno"))
 
-        self.assertEqual(settings.x_sources, ("TTendenciaX", "home", "ceciarmy"))
+    def test_known_urls_are_passed_to_extractors(self) -> None:
+        known = lambda url: True  # noqa: E731
+        with patch("extractors.registry.ElTribunoExtractor.scan", return_value=[]) as scan:
+            self.registry.scan_source("eltribuno", known=known)
+        self.assertIs(scan.call_args.kwargs["known"], known)
+        self.assertEqual(scan.call_args.kwargs["max_items"], 15)
 
 
 if __name__ == "__main__":

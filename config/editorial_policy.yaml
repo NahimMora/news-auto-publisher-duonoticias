@@ -1,146 +1,27 @@
-version: 1
-general_tone: "moderado, claro, rioplatense"
-default_decision: manual_review
-political_line: "informativa, no militante, configurable"
+# Linea editorial de DUO Noticias (reestructuracion 2026-10).
+# La redaccion la aplica editorial/prompting.py (prompt unico) y la valida editorial/captions.py.
+# Este archivo documenta la politica; los cambios de tono se hacen en el prompt y suben
+# llm.prompt_version en config/editorial_scoring.yaml (invalida la cache de captions).
+version: 2
+general_tone: "periodistico, argentino, directo, dinamico, cercano, con identidad saltena"
+political_line: >-
+  Prioridad a lo que afecta a Salta. En medidas conjuntas Provincia-Nacion se destacan los efectos
+  concretos para Salta y la cooperacion institucional cuando esten documentados, sin tono
+  propagandistico, sin inventar logros, sin omitir datos contrarios sustanciales. Politica nacional
+  de rutina no entra (penalidad politica_nacional_rutinaria).
 
 hard_rules:
-  - "No inventar datos, cifras, delitos, relaciones ni nombres."
-  - "Separar hechos de opinion cuando el contenido sea politico o economico."
-  - "No publicar contenido sensible si falta contexto verificable."
-  - "No exponer menores en situaciones sensibles."
-  - "No usar hashtags partidarios salvo configuracion explicita."
-  - "No incluir URLs ni @menciones en captions generadas."
-  - "El caption total no puede superar 2500 caracteres."
+  - "No inventar datos, cifras, nombres, lugares, fechas, causas ni relaciones."
+  - "Policiales: conservar la contundencia de lo verificado; respetar detenido/imputado/acusado/condenado."
+  - "Sin humor en muertes, homicidios, tragedias, violencia grave ni victimas."
+  - "Sin rotulos de plantilla (Que paso, Por que importa, CTA, Fuente) ni nombre del medio de origen."
+  - "Caption total (con emojis, CTA y hashtags) menor a 2000 caracteres."
+  - "El mismo caption para Instagram y Facebook."
+  - "Videos de X con poco contexto: solo lo que se sostiene; si no se sabe que muestra, no se publica."
 
-formats:
-  x_viral_reel:
-    title_max_words: 10
-    title_max_chars: 80
-    caption_min_chars: 350
-    caption_max_chars: 800
-    hook_max_words: 12
-    tone: "picante, claro, rioplatense, no difamatorio"
-    allow_emojis: true
-    max_emojis: 6
-
-  paparazzi:
-    tone: "espectaculos argentino, fuerte pero verificable"
-    caption_min_chars: 400
-    caption_max_chars: 1200
-    allow_emojis: true
-    max_emojis: 8
-    structure:
-      - "🔥 Título gancho (1 línea, sin emojis en el título)"
-      - ""
-      - "📌 Subtítulo de contexto"
-      - "Párrafo 1: quién es y qué pasó"
-      - ""
-      - "💬 Subtítulo de desarrollo"
-      - "Párrafo 2: detalles clave, declaraciones o giro"
-      - ""
-      - "🎯 Subtítulo de cierre"
-      - "Párrafo 3: remate + pregunta CTA"
-
-  news:
-    tone: "informativo, sobrio en temas sensibles"
-    caption_min_chars: 500
-    caption_max_chars: 2200
-    require_who_what_where_when: true
-    allow_emojis: true
-    max_emojis: 5
-    structure:
-      - "📣 Título informativo (1 línea, directo, sin emojis)"
-      - ""
-      - "▪️ Subtítulo: Qué pasó"
-      - "Párrafo: quién, qué, dónde, cuándo (2-3 oraciones)"
-      - ""
-      - "▪️ Subtítulo: Por qué importa"
-      - "Párrafo: impacto, contexto, datos clave (2-3 oraciones)"
-      - ""
-      - "▪️ Subtítulo: El detalle clave"
-      - "Párrafo: dato concreto, cifra o declaración destacada"
-      - ""
-      - "❓ Pregunta corta para comentarios (CTA final)"
-
-  salta_local:
-    tone: "cercano, local, vecinal, informativo"
-    caption_min_chars: 400
-    caption_max_chars: 1800
-    allow_emojis: true
-    max_emojis: 5
-    structure:
-      - "📍 Título local (menciona Salta si es relevante)"
-      - ""
-      - "▪️ Subtítulo: Lo que ocurrió"
-      - "Párrafo: hechos concretos (quién, qué, dónde)"
-      - ""
-      - "▪️ Subtítulo: El impacto en Salta"
-      - "Párrafo: consecuencias locales o afectados"
-      - ""
-      - "❓ Pregunta al lector (CTA)"
-
-  policial_salta:
-    tone: "sobrio, informativo, sin afirmar culpabilidad sin condena"
-    caption_min_chars: 350
-    caption_max_chars: 1600
-    allow_emojis: true
-    max_emojis: 4
-    structure:
-      - "🚨 Título descriptivo (quién / qué / dónde)"
-      - ""
-      - "▪️ Subtítulo: Los hechos"
-      - "Párrafo: descripción objetiva del hecho policial o judicial"
-      - ""
-      - "▪️ Subtítulo: La causa / el imputado"
-      - "Párrafo: estado procesal, medidas tomadas, caratula"
-      - ""
-      - "❓ Opinión del lector (CTA)"
-
-allowed_hashtags:
-  - "#DuoNoticias"
-  - "#Noticias"
-  - "#Argentina"
-  - "#UltimosMinutos"
-
-# Solo usar cuando el hecho ocurrio FISICAMENTE en Salta provincia.
-geo_hashtags_salta:
-  - "#Salta"
-  - "#SaltaArgentina"
-
-hashtag_rules:
-  - "No usar #Salta ni #SaltaArgentina si la noticia no ocurrio explicitamente en Salta."
-  - "No usar hashtags geograficos para noticias nacionales, internacionales o de espectaculos."
-  - "Sources locales (eltribuno, ariesonline, eloncesalta, nuevodiariodesalta, fiscalespenalesalta, justiciasalta) pueden usar geo_hashtags_salta."
-
-blocked_hashtags:
-  - "#Milei2027"
-  - "#Kirchnerismo"
-  - "#AntiK"
-  - "#Libertarios"
-  - "#Peronismo"
-
-sensitive_policy:
-  crime: "tono sobrio; no afirmar autoria penal sin condena o fuente clara"
-  minors: "evitar exposicion, nombres e imagenes si no es imprescindible"
-  accidents: "no publicar muerte visible ni gore"
-  doxxing: "rechazar datos privados"
-
-ranking:
-  top_n_per_run: 10
-  min_virality_score: 0.3
-  max_content_age_hours: 24
-  prefer_local_salta: true
-  priority_categories:
-    - salta
-    - policial_salta
-    - espectaculos
-    - nacional
-    - economia
-    - viral
-  local_sources:
-    - eltribuno
-    - ariesonline
-    - eloncesalta
-    - nuevodiariodesalta
-    - fiscalespenalesalta
-    - justiciasalta
+hashtags:
+  always: ["#DuoNoticias"]
+  salta: "#Salta solo si el hecho es salteno (grupo local o relacion_salta=2)"
+  national: "#Argentina para nacionales"
+  max: 4
+  blocked: ["#Milei2027", "#Kirchnerismo", "#AntiK", "#Libertarios", "#Peronismo"]

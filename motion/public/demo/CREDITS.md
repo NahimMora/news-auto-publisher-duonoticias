@@ -10,5 +10,6 @@ Las piezas de demo (`src/demo/pieces.ts`) usan estos archivos de Wikimedia Commo
 | `teleferico.jpg` | Cable Car to the Cerro San Bernardo - Salta - Argentina.jpg | Adam Jones | CC BY-SA 3.0 | https://commons.wikimedia.org/wiki/File:Cable_Car_to_the_Cerro_San_Bernardo_-_Salta_-_Argentina.jpg |
 | `cabildo-vertical.jpg` | Cabildo de Salta 2008.jpg | Angel David Ramayo | CC BY 2.0 | https://commons.wikimedia.org/wiki/File:Cabildo_de_Salta_2008.jpg |
 | `cafayate-aereo.mp4` | Purmamarca, Las Salinas Grandes de Jujuy, Salta y Cafayate.webm (fragmento de 16 s, sin audio, recodificado a H.264) | Views4k | CC BY 3.0 | https://commons.wikimedia.org/wiki/File:Purmamarca,_Las_Salinas_Grandes_de_Jujuy,_Salta_y_Cafayate.webm |
+| `cafayate-vertical.mp4` | Recorte central 9:16 de `cafayate-aereo.mp4`, para probar videos verticales | Views4k | CC BY 3.0 | https://commons.wikimedia.org/wiki/File:Purmamarca,_Las_Salinas_Grandes_de_Jujuy,_Salta_y_Cafayate.webm |
 
 Las fotos se redujeron a un máximo de 2000 px. Si se publica una demo fuera del equipo, hay que acreditar al autor y la licencia como indica cada archivo.

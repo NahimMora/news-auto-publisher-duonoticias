@@ -16,40 +16,43 @@ Tests and dry-runs never publish live.
 
 ```powershell
 python -m cli.main doctor
-python -m cli.main dry-run
-python -m cli.main run-once --dry-run
-python -m cli.main queue --format table
+python -m cli.main simulate --max-news 15            # ciclo completo real sobre data/simulation.sqlite3, nunca publica
+python -m cli.main simulate --no-scrape --render     # reprocesa la base de simulacion y renderiza las piezas
+python -m cli.main cycle                             # un ciclo sobre la base real; sin --live no publica
+python -m cli.main queue-state                       # conteo por estado de la cola
+python -m cli.main inspect --content-key <key>       # decision, puntaje y transiciones de una nota
+python -m cli.main llm-usage --hours 24              # llamadas, tokens y costo estimado de Gemini
 python -m cli.main import-x-url --url "https://x.com/user/status/123"
-python -m cli.main publish-pending
 ```
 
-## 24/7
+## Ciclo horario 24/7
 
 ```powershell
-python -m cli.main run-24-7 --interval-minutes 60
+python -m cli.main run-24-7            # simulacion (no publica)
+python -m cli.main run-24-7 --live     # produccion (solo FERNANDO, via la tarea programada)
 ```
 
-or:
+Un ciclo por hora, alineado a `cycle.align_minute` (config/editorial_scoring.yaml). El heartbeat guarda
+`last_cycle_id` (hora local, ej. `2026-10-17T15`): un ciclo lento no se pisa con el siguiente y un reinicio
+dentro de la misma hora no repite el ciclo. Cada ciclo: recuperacion -> vencimiento (12 h) -> recopilacion ->
+filtros tecnicos -> acontecimientos -> marca de agua -> relevancia por lotes -> cola -> cupos (max 10) ->
+produccion -> validacion -> publicacion -> registro. Detalle en `docs/ARCHITECTURE.md`.
 
-```powershell
-.\24_7_duo.bat
-```
+Archivos de runtime:
+- `logsutorun_24_7.log`: log rotativo del loop.
+- `logs\start_24x7.log`: arranques y fallas de preflight de la tarea programada.
+- `data
+untime\heartbeat.json`: estado del ultimo ciclo, resultado, proximo ciclo.
+- `data
+untimeutorun.lock`: lock de proceso (nunca dos ciclos a la vez).
+- `data\media_cache\`: videos verificados (una descarga por URL).
 
-The loop catches per-cycle failures, logs the exception, sleeps and continues. Use `CTRL+C` for clean shutdown.
-The hardened autorun writes:
-- `logs\autorun_24_7.log`: rotating runtime log from the CLI.
-- `logs\start_24x7.log`: start attempts and preflight failures of the scheduled task.
-- `data\runtime\heartbeat.json`: last cycle state, duration, result and next sleep.
-- `data\runtime\autorun.lock`: process lock to avoid duplicate publishers.
-
-The 24/7 loop aligns cycles to the configured publication blocks when the next block is sooner than the interval. Defaults:
-- `DUO_SCHEDULE_SLOTS=09:00,12:00,15:00,18:00,21:00`
-- `DUO_SCHEDULE_VIDEOS_PER_SLOT=5`
-- `DUO_SCHEDULE_POSTS_PER_SLOT=10`
-- `DUO_PUBLISH_DEFAULT_MAX_POSTS=15`
-- `DUO_PUBLISH_SLOT_WINDOW_MINUTES=45`
-- `DUO_SAFE_RECOVERY_MAX_RETRIES=3`
-- `DUO_HEARTBEAT_STALE_MINUTES=90`
+Recuperacion ante fallas:
+- Reinicio con piezas a medio producir: vuelven a la cola con su vencimiento original.
+- Instagram publicado y Facebook fallido: la pieza queda `scheduled` y solo se reintenta Facebook (no ocupa cupo nuevo).
+- Publicacion interrumpida sin evidencia (`ambiguous`): requiere `retry` manual tras revisar Meta.
+- Gemini caido: la pieza vuelve a la cola (`retry`) y no se publica un texto pobre.
+- Marca de agua ambigua: estado `review`, nunca se publica sola.
 
 ## Windows Autorun (produccion, solo FERNANDO)
 

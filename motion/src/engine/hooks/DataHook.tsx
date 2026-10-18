@@ -1,13 +1,13 @@
 import React from "react";
-import { AbsoluteFill, useVideoConfig } from "remotion";
+import { AbsoluteFill, useCurrentFrame, useVideoConfig } from "remotion";
 import { brand } from "../../brand/brand.config";
 import { getCategory } from "../../brand/categories";
 import { fitSingleLine, fitTextBlock } from "../../design/textLayout";
 import { roleStyle, textRoles, upper } from "../../design/tokens";
 import { NumberCounter } from "../animations/editorial";
-import { GrowBar, MaskWipe } from "../animations/primitives";
+import { GrowBar } from "../animations/primitives";
 import { TextReveal } from "../animations/TextReveal";
-import { sec, useAnimationConfig } from "../timing";
+import { ramp, sec, useAnimationConfig } from "../timing";
 import type { HookDefinition, HookProps } from "./types";
 
 /**
@@ -16,6 +16,7 @@ import type { HookDefinition, HookProps } from "./types";
  * revela el contexto. Solo usa cifras que vienen en la nota (stats).
  */
 const DataOverlay: React.FC<HookProps> = ({ content, layout, accent, durationFrames }) => {
+  const frame = useCurrentFrame();
   const { fps, width, height } = useVideoConfig();
   const cfg = useAnimationConfig();
   const stat = content.stats[0];
@@ -35,10 +36,11 @@ const DataOverlay: React.FC<HookProps> = ({ content, layout, accent, durationFra
   });
   const kickerSize = layout.type.kicker;
   const blockH = kickerSize * 2.2 + numberSize * 0.9 + 40 * layout.u + labelLayout.height;
-  const top = height * 0.5 - blockH / 2;
+  const top = height * 0.56 - blockH / 2;
   return (
-    <MaskWipe mode="out" delay={exitStart / fps} duration={0.42} easing="exit">
-      <AbsoluteFill style={{ background: brand.colors.primary }}>
+    <AbsoluteFill style={{ opacity: 1 - ramp(frame, exitStart, sec(0.5, fps, cfg.speed), "glide") }}>
+      {/* Degradado sobre la foto del escenario: imagen arriba, cifra sobre violeta pleno */}
+      <AbsoluteFill style={{ background: `linear-gradient(to bottom, rgba(54,25,87,0.12) 0%, rgba(54,25,87,0.45) 24%, rgba(54,25,87,0.95) 42%, ${brand.colors.primary} 56%)` }}>
         <div style={{ position: "absolute", left: layout.margin, top, width: maxW }}>
           <span style={{ ...roleStyle(textRoles.kicker, kickerSize), color: accent }}>{upper(`${getCategory(content.category).label} · en cifras`)}</span>
           <div style={{ marginTop: kickerSize * 0.9 }}>
@@ -60,7 +62,7 @@ const DataOverlay: React.FC<HookProps> = ({ content, layout, accent, durationFra
           </div>
         </div>
       </AbsoluteFill>
-    </MaskWipe>
+    </AbsoluteFill>
   );
 };
 

@@ -43,6 +43,7 @@ class FormatterServiceTests(unittest.TestCase):
                             }
                         ]
                     ),
+                    "media_json": json.dumps({"video": {"path": str(tmp_path / "source.mp4"), "duration_seconds": 12.0, "kind": "mp4"}}),
                 }
                 def fake_process_video(*args: object, **kwargs: object) -> str:
                     output = tmp_path / "out.mp4"

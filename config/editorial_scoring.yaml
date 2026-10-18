@@ -1,0 +1,112 @@
+# Ciclo horario, cupos, cola, relevancia y control de costos (reestructuracion 2026-10).
+# Todos los valores son configurables; los umbrales se calibraron con notas reales
+# del 2026-10-17/18 (ver docs/REESTRUCTURACION_2026_10.md, seccion Calibracion).
+version: 1
+
+cycle:
+  # Un ciclo de seleccion y publicacion por hora, alineado al minuto indicado.
+  interval_minutes: 60
+  align_minute: 0
+  # Tiempo maximo de produccion (render + publicacion) por ciclo. Lo que no entra
+  # vuelve a la cola sin perder su lugar ni reiniciar su vencimiento.
+  production_budget_minutes: 45
+
+quotas:
+  # Capacidad maxima por ciclo; no es una obligacion de llenado.
+  # 2026-10-18: se quitaron los 2 cupos libres (decision del propietario) -> techo 10.
+  max_per_cycle: 10
+  groups:
+    local: 6
+    national: 2
+    paparazzi: 2
+  free: 0
+  # Si se vuelven a habilitar cupos libres: grupos que podrian usarlos (nunca national).
+  free_eligible_groups: [local, paparazzi, x_feed]
+  # Ninguna fuente local se lleva mas de esta cantidad de los cupos locales de un ciclo.
+  max_per_source_per_cycle: 3
+  # Tope diario de piezas (0 = sin tope propio). Instagram limita la publicacion por API
+  # (content_publishing_limit, 24 h moviles); el publicador lo consulta antes de cada ciclo.
+  max_pieces_per_day: 0
+
+queue:
+  # Una candidata puede esperar como maximo esto desde su primer ingreso elegible.
+  pending_ttl_hours: 12
+  # Reintentos de produccion/publicacion antes de descartar (errores recuperables).
+  max_retries: 3
+  # Antiguedad maxima de la nota original para entrar a la cola.
+  max_content_age_hours:
+    local: 24
+    national: 12
+    paparazzi: 24
+    x_feed: 24
+
+relevance:
+  # Componentes 0-10 que devuelve la evaluacion (una llamada por lote) y sus pesos.
+  # El puntaje final es 0-100 e interpretable: sum(peso * componente) * 10 - penalidades.
+  weights:
+    local:
+      impacto: 0.25
+      urgencia: 0.15
+      interes_publico: 0.25
+      gravedad: 0.10
+      novedad: 0.15
+      repercusion: 0.10
+    national:
+      impacto: 0.20
+      urgencia: 0.15
+      interes_publico: 0.15
+      gravedad: 0.20
+      novedad: 0.10
+      repercusion: 0.20
+    paparazzi:
+      protagonista: 0.30
+      repercusion: 0.25
+      novedad: 0.20
+      interes_publico: 0.15
+      urgencia: 0.10
+    x_feed:
+      impacto: 0.20
+      interes_publico: 0.25
+      novedad: 0.25
+      repercusion: 0.20
+      urgencia: 0.10
+  penalties:
+    # Comunicado institucional de rutina (acto, curso, inscripcion generica, protocolo).
+    rutina_institucional: 25
+    # Politica nacional de rutina (internas, chicanas de Buenos Aires, sin impacto en Salta).
+    politica_nacional_rutinaria: 30
+    # Nota de un medio salteno sin relacion con Salta: no compite como noticia local.
+    sin_relacion_salta: 25
+  # Puntaje minimo para entrar a la cola (no se rellenan cupos con material flojo).
+  thresholds:
+    local: 55
+    local_official: 65
+    # Calibrado 2026-10-18 (13 notas con video, 3 reevaluaciones): el hecho nacional grave del
+    # dia promedio 73.9 (rango 66-76.5); lo siguiente promedio 41.6 o menos.
+    national: 60
+    # Paparazzi: Dibu 83, Confessore 44, figuras conocidas 32-34, notas flojas 27-28.
+    paparazzi: 32
+    x_feed: 55
+  # Lote de notas por llamada de evaluacion.
+  batch_size: 12
+  # Texto maximo de cada nota que se envia a la evaluacion (titulo + bajada + inicio).
+  max_chars_per_item: 700
+
+media:
+  # Recorte mecanico: hasta 60 s se usa el video entero; si es mas largo, dos tramos
+  # cronologicos desde el inicio (0-60 y 60-120). Nunca se buscan otros fragmentos.
+  clip_seconds: 60
+  max_clips: 2
+  min_clip_seconds: 5
+  # Un video mas corto que esto no es un video de la nota (previews animados de 2 s).
+  min_video_seconds: 5
+  max_download_mb: 400
+
+llm:
+  # Version de los prompts: cambia la clave de cache de captions y evaluaciones.
+  prompt_version: duo-2026-10-v1
+  # Tarifas por millon de tokens (USD) para estimar costos. Vacio = no se estiman.
+  # Cargarlas desde la tabla de precios vigente del modelo configurado en GEMINI_MODEL.
+  rates_per_million:
+    input: null
+    output: null

@@ -1,2 +1,0 @@
-﻿# Noticias Argentinas scraper package
-

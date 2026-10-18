@@ -18,10 +18,11 @@ from storage.models import (
     safe_json,
     utc_now_iso,
 )
+from storage.editorial_store import EditorialStoreMixin
 from storage.settings import PipelineSettings, get_settings
 
 
-class PipelineStore:
+class PipelineStore(EditorialStoreMixin):
     TRACEABILITY_MIGRATION = "2026_05_02_traceability_runtime"
 
     def __init__(self, settings: PipelineSettings | None = None) -> None:
@@ -400,6 +401,7 @@ class PipelineStore:
             ON analytics_snapshots(publication_id, checkpoint_label)
             """
         )
+        self._migrate_editorial_schema()
 
     def _backfill_materialized_fields(self) -> None:
         with self.connection() as conn:
@@ -692,8 +694,8 @@ class PipelineStore:
             (limit,),
         )
 
-    def save_editorial(self, content_key: str, editorial: EditorialPackage) -> None:
-        status = "editorialized" if editorial.publish else "filtered"
+    def save_editorial(self, content_key: str, editorial: EditorialPackage, *, status: str | None = None) -> None:
+        status = status or ("editorialized" if editorial.publish else "discarded")
         payload = editorial.as_dict()
         with self.connection() as conn:
             conn.execute(
@@ -710,6 +712,7 @@ class PipelineStore:
                     editorial_signature = ?,
                     final_caption = ?,
                     final_overlay = ?,
+                    editorial_cache_key = ?,
                     pipeline_status = ?,
                     updated_at = ?
                 WHERE content_key = ?
@@ -726,6 +729,7 @@ class PipelineStore:
                     editorial.pattern_signature,
                     editorial.caption,
                     editorial.overlay,
+                    str((editorial.input_payload or {}).get("cache_key") or ""),
                     status,
                     utc_now_iso(),
                     content_key,
@@ -813,6 +817,24 @@ class PipelineStore:
             LIMIT ?
             """,
             (now_iso, limit),
+        )
+
+    def schedule_context_since(self, since_iso: str, limit: int = 500) -> List[Dict[str, Any]]:
+        """Agendado, en curso o publicado desde ``since_iso``: lo que ocupa franjas y cupo diario."""
+        return self._rows(
+            """
+            SELECT content_key, title, source, source_handle, media_type, assigned_post_type,
+                   json_extract(formatted_json, '$.post_type') AS formatted_post_type,
+                   score_theme, assigned_slot, assigned_time, schedule_json, pipeline_status
+            FROM content_items
+            WHERE schedule_json IS NOT NULL
+              AND formatted_json IS NOT NULL
+              AND pipeline_status IN ('scheduled', 'publish_failed', 'publishing', 'published')
+              AND json_extract(schedule_json, '$.scheduled_for') >= ?
+            ORDER BY json_extract(schedule_json, '$.scheduled_for') ASC
+            LIMIT ?
+            """,
+            (since_iso, limit),
         )
 
     def save_schedule(self, content_key: str, schedule: ScheduleDecision) -> None:

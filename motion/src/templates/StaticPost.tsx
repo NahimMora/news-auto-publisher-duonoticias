@@ -178,7 +178,8 @@ const SplitPost: React.FC<{ content: Content; layout: Layout; accent: string; to
   const block = useHeadline(content, layout, textRoles.postHeadline, 1, layout.format === "square" ? 0.3 : 0.32, 0.86);
   const bottomPad = layout.format === "reel" ? layout.safeBottom : Math.round(64 * u);
   const panelContent = block.height + layout.type.kicker * 1.9 + 28 * u + layout.type.meta * 1.4 + 34 * u;
-  const panelH = Math.round(panelContent + bottomPad + 86 * u);
+  // Respiro superior corto: la categoria arranca cerca del borde del panel.
+  const panelH = Math.round(panelContent + bottomPad + 22 * u);
   const photoH = layout.height - panelH + Math.round(60 * u);
   const cutH = Math.round(60 * u);
   return (
@@ -288,34 +289,65 @@ const PhotoSlide: React.FC<{ content: Content; layout: Layout; index: number; to
   );
 };
 
+/**
+ * Slide de texto del carrusel, con el lenguaje de P5: campo violeta, esquinas
+ * ambar, titular condensado como recordatorio y el parrafo de contexto.
+ */
 const TextSlide: React.FC<{ content: Content; layout: Layout; text: string; index: number; total: number; accent: string }> = ({ content, layout, text, index, total }) => {
   const u = layout.u;
   const width = layout.contentWidth;
+  const textWidth = width - Math.round(40 * u);
+  const titleRole = { ...textRoles.breakingHeadline, lineHeight: 0.98 };
+  const title = useMemo(
+    () =>
+      fitTextBlock({
+        text: content.headline,
+        role: titleRole,
+        maxWidth: width,
+        maxLines: 3,
+        preferLines: 2,
+        minSize: Math.round(48 * u),
+        maxSize: Math.round(76 * u),
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [content.headline, width, u],
+  );
   const para = useMemo(() => {
-    // Cuerpo que entra en el alto disponible (de 52 a 34 px a 1080).
-    const maxH = layout.height - 330 * u;
-    for (let size = Math.round(52 * u); size >= Math.round(34 * u); size -= 2) {
-      const l = layoutParagraph(text, textRoles.deck, size, width);
+    // Cuerpo que entra en el alto que deja el titular (de 50 a 34 px a 1080).
+    const maxH = layout.height - 470 * u - title.height;
+    for (let size = Math.round(50 * u); size >= Math.round(34 * u); size -= 2) {
+      const l = layoutParagraph(text, textRoles.deck, size, textWidth);
       if (l.height <= maxH) return l;
     }
-    return layoutParagraph(text, textRoles.deck, Math.round(34 * u), width);
-  }, [text, layout, u, width]);
+    return layoutParagraph(text, textRoles.deck, Math.round(34 * u), textWidth);
+  }, [text, layout, u, textWidth, title.height]);
+  const last = index >= total - 1;
   return (
-    <AbsoluteFill style={{ background: brand.colors.paper }}>
-      <div style={{ position: "absolute", left: 0, top: 0, width: "100%", height: Math.max(6, 10 * u), background: brand.colors.primary }} />
-      <div style={{ position: "absolute", left: layout.margin, top: Math.round(84 * u), right: layout.margin, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span style={{ ...roleStyle(textRoles.kicker, layout.type.kicker * 0.9), color: brand.colors.primary }}>{upper(getCategory(content.category).label)}</span>
-        <SlideCounter layout={layout} index={index} total={total} color={brand.colors.primary} />
+    <AbsoluteFill style={{ background: brand.colors.primary }}>
+      <AbsoluteFill style={{ background: brand.colors.accent, clipPath: slashCorner(1, layout.width, layout.height, "top-left", 0.16) }} />
+      <AbsoluteFill style={{ background: brand.colors.accent, clipPath: slashCorner(1, layout.width, layout.height, "bottom-right", 0.2) }} />
+      <Grain opacity={0.06} />
+      <div style={{ position: "absolute", left: layout.margin, top: Math.round(58 * u) }}>
+        <BrandLogo height={Math.round(50 * u)} />
       </div>
-      <div style={{ position: "absolute", left: layout.margin, width, top: "50%", translate: "0 -46%" }}>
-        <TextReveal layout={para} role={textRoles.deck} color={brand.colors.primaryDeep} accent={brand.colors.primary} mode="none" />
-      </div>
-      <div style={{ position: "absolute", left: layout.margin, right: layout.margin, bottom: Math.round(64 * u), display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ background: brand.colors.primary, padding: `${10 * u}px ${16 * u}px` }}>
-          <BrandLogo height={Math.round(36 * u)} />
+      <div style={{ position: "absolute", left: layout.margin, right: layout.margin, top: "50%", translate: "0 -50%", display: "flex", flexDirection: "column", gap: 30 * u }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span style={{ ...roleStyle(textRoles.kicker, layout.type.kicker), color: brand.colors.accent }}>{upper(getCategory(content.category).label)}</span>
+          <SlideCounter layout={layout} index={index} total={total} color="rgba(255,255,255,0.8)" />
         </div>
-        <span style={{ ...roleStyle(textRoles.meta, layout.type.meta * 0.9), color: "#5B4E6B" }}>{upper(`${brand.copy.sourcePrefix}: ${content.source.name}`)}</span>
+        <Headline block={title} role={titleRole} color={brand.colors.white} accent={brand.colors.accent} markerText={brand.colors.ink} />
+        <div style={{ height: Math.max(4, 6 * u), width: 120 * u, background: brand.colors.accent }} />
+        <div style={{ display: "flex", gap: 32 * u }}>
+          <div style={{ width: Math.round(8 * u), background: "rgba(255,255,255,0.22)", flexShrink: 0 }} />
+          <TextReveal layout={para} role={textRoles.deck} color={brand.colors.white} accent={brand.colors.accent} mode="none" />
+        </div>
+        <MetaLine date={content.date} source={content.source.name} fontSize={layout.type.meta} color="rgba(255,255,255,0.78)" separatorColor={brand.colors.accent} />
       </div>
+      {!last ? (
+        <div style={{ position: "absolute", left: layout.margin, bottom: Math.round(64 * u) }}>
+          <SwipeHint layout={layout} color={brand.colors.white} total={total} />
+        </div>
+      ) : null}
     </AbsoluteFill>
   );
 };

@@ -18,6 +18,8 @@ export type Beat = {
   index: number;
   /** Foto que acompana el bloque. */
   photoIndex: number;
+  /** Lista "Que se sabe": si arranca con la bajada (false cuando la bajada no entra). */
+  withDeck?: boolean;
 };
 
 export type TimelinePlan = {
@@ -27,7 +29,7 @@ export type TimelinePlan = {
   total: number;
 };
 
-type Candidate = { kind: BeatKind; index: number; min: number; weight: number };
+type Candidate = { kind: BeatKind; index: number; min: number; weight: number; withDeck?: boolean };
 
 const readingSeconds = (text: string, base: number) => {
   // ~3.2 palabras por segundo de lectura en pantalla + tiempo de entrada.
@@ -60,6 +62,32 @@ export const planTimeline = (opts: {
       candidates.push({ kind: "stat", index: i, min: f(readingSeconds(s.label, 3.2)), weight: 1.2 });
     });
     if (content.deck) candidates.push({ kind: "deck", index: 0, min: f(readingSeconds(content.deck, 3.0)), weight: 1 });
+  } else if (template === "breaking" && !videoLed) {
+    // Urgencias: bajada y claves en una sola pantalla "Que se sabe" (lista).
+    // index = cantidad de claves que entran en el tiempo disponible.
+    // Si la bajada es larga y no entra, la lista se arma solo con las claves.
+    const headlineMin = candidates[0].min;
+    const itemSeconds = (t: string) => 0.35 + stripEmphasis(t).split(/\s+/).filter(Boolean).length / 3.6;
+    const fit = (items: string[]) => {
+      let count = 0;
+      let need = 0;
+      for (const item of items) {
+        const next = need + itemSeconds(item);
+        if (headlineMin + f(Math.max(3.0, 0.6 + next)) > available) break;
+        need = next;
+        count += 1;
+      }
+      return { count, need };
+    };
+    const withDeck = content.deck ? fit([content.deck, ...content.highlights]) : { count: 0, need: 0 };
+    const onlyHighlights = fit(content.highlights);
+    const useDeck = withDeck.count > 0 && withDeck.count >= onlyHighlights.count;
+    const best = useDeck ? withDeck : onlyHighlights;
+    if (best.count > 0) {
+      const highlights = useDeck ? best.count - 1 : best.count;
+      candidates.push({ kind: "deck", index: highlights, min: f(Math.max(3.0, 0.6 + best.need)), weight: 1.2, withDeck: useDeck });
+    }
+    if (content.quote) candidates.push({ kind: "quote", index: 0, min: f(readingSeconds(content.quote.text, 3.2)), weight: 1 });
   } else {
     if (content.deck) candidates.push({ kind: "deck", index: 0, min: f(readingSeconds(content.deck, 3.0)), weight: 1 });
     // En piezas de video el protagonista es el clip: solo titular y bajada, despues
@@ -98,7 +126,7 @@ export const planTimeline = (opts: {
   chosen.forEach((c, i) => {
     let duration = c.min + Math.floor((spare * c.weight) / totalWeight);
     if (i === chosen.length - 1 && holdFrames === 0) duration = outro.start - cursor; // cierra exacto
-    beats.push({ kind: c.kind, index: c.index, start: cursor, duration, photoIndex: i % photos });
+    beats.push({ kind: c.kind, index: c.index, start: cursor, duration, photoIndex: i % photos, withDeck: c.withDeck });
     cursor += duration;
   });
   if (holdFrames > 0) {

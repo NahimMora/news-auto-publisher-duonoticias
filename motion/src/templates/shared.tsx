@@ -105,6 +105,67 @@ export const EndCard: React.FC<{
   );
 };
 
+/**
+ * Base de los bloques de texto en reels. Un poco mas baja que la zona segura:
+ * debajo queda el zocalo, que si puede quedar bajo el caption de Instagram.
+ */
+export const textBottom = (layout: Layout) => (layout.format === "reel" ? layout.safeBottom - Math.round(50 * layout.u) : layout.safeBottom);
+
+/**
+ * ZOCALO de reels: franja de marca con fecha y fuente y una barra de progreso
+ * ambar. Ocupa la franja inferior (la del caption de Instagram) con
+ * informacion redundante: si la tapa la interfaz no se pierde nada.
+ */
+export const NewsStrip: React.FC<{ setup: TemplateSetup; label?: string; from?: number }> = ({ setup, label, from }) => {
+  const { content, layout, plan } = setup;
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  if (layout.format !== "reel") return null;
+  const u = layout.u;
+  const start = from ?? Math.max(0, plan.hook.duration - sec(0.2, fps));
+  const end = plan.outro.start;
+  if (frame < start || frame >= end + 4) return null;
+  const inP = ramp(frame, start, sec(0.45, fps), "snap");
+  const progress = Math.min(1, Math.max(0, (frame - start) / Math.max(1, end - start)));
+  const h = Math.round(62 * u);
+  const tagFont = Math.round(layout.type.kicker * 0.78);
+  const tagText = upper(label ?? content.location ?? "Salta");
+  return (
+    <div
+      style={{
+        position: "absolute",
+        left: 0,
+        right: 0,
+        bottom: Math.round(236 * u),
+        height: h,
+        translate: `${(1 - inP) * -60}px 0`,
+        opacity: inP,
+        display: "flex",
+        alignItems: "stretch",
+      }}
+    >
+      <div style={{ position: "absolute", left: 0, right: 0, top: 0, height: Math.max(2, 4 * u), background: "rgba(255,255,255,0.14)" }}>
+        <div style={{ height: "100%", width: `${progress * 100}%`, background: brand.colors.accent }} />
+      </div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          paddingLeft: layout.margin,
+          paddingRight: 34 * u,
+          background: brand.colors.accent,
+          clipPath: `polygon(0 0, 100% 0, calc(100% - ${Math.round(h * 0.73)}px) 100%, 0 100%)`,
+        }}
+      >
+        <span style={{ ...roleStyle(textRoles.kicker, tagFont), color: brand.colors.ink }}>{tagText}</span>
+      </div>
+      <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 18 * u, paddingLeft: 10 * u, overflow: "hidden", whiteSpace: "nowrap", background: "linear-gradient(to right, rgba(30,13,51,0.92), rgba(30,13,51,0.55))" }}>
+        <MetaLine date={content.date} source={content.source.name} fontSize={Math.round(layout.type.meta * 0.9)} color="rgba(255,255,255,0.86)" separatorColor={brand.colors.accent} />
+      </div>
+    </div>
+  );
+};
+
 /** Monta el gancho resuelto encima del escenario. */
 export const HookLayer: React.FC<{ setup: TemplateSetup; template: TemplateId }> = ({ setup, template }) => {
   const { hook, plan } = setup;

@@ -38,8 +38,6 @@ def _config(tmp: Path, **overrides) -> MotionConfig:
         enabled=True,
         node="node",
         motion_dir=tmp,
-        photo_reel_modes={"breaking", "data"},
-        photo_reel_seconds=14,
         max_reel_seconds=180,
         render_timeout_seconds=60,
         inbox=True,
@@ -154,13 +152,19 @@ class EngineTests(unittest.TestCase):
         self.assertEqual((content["photos"][0]["width"], content["photos"][0]["height"]), (2000.0, 1500.0))
         self.assertNotIn("url", content["source"])
 
-    def test_photo_reel_modes(self) -> None:
-        self.assertEqual(self.engine.wants_photo_reel(self._brief(breaking=True)), "breaking")
-        stats = [{"label": "a", "value": 1}, {"label": "b", "value": 2}]
-        self.assertEqual(self.engine.wants_photo_reel(self._brief(stats=stats)), "data")
-        self.assertIsNone(self.engine.wants_photo_reel(self._brief()))
-        self.engine.config.photo_reel_modes = set()
-        self.assertIsNone(self.engine.wants_photo_reel(self._brief(breaking=True)))
+    def test_no_photo_reels(self) -> None:
+        """Un reel solo sale de un video real: con fotos el motor se niega."""
+        self.assertFalse(hasattr(self.engine, "wants_photo_reel"))
+        content = self.engine.build_content("k0", {"source": "eltribuno"}, self._brief(breaking=True), photos=[str(self.photo)])
+        with self.assertRaises(MotionRenderError):
+            self.engine.render_reel("k0", content, "breaking", self.tmp / "out" / "k0.mp4")
+        self.assertEqual(self.engine.worker.calls, [])
+
+    def test_reel_uses_explicit_clip_seconds(self) -> None:
+        content = self.engine.build_content("k4", {"source": "tn"}, self._brief())
+        content["videos"] = [{"src": "C:/v.mp4", "durationSeconds": 60.0, "keepAudio": True, "trimStartSeconds": 0}]
+        self.engine.render_reel("k4", content, "editorial", self.tmp / "out" / "k4.mp4", seconds=42.5)
+        self.assertEqual(self.engine.worker.calls[0]["piece"]["presentation"]["durationSeconds"], 42.5)
 
     def test_post_with_photo_slides_and_inbox(self) -> None:
         content = self.engine.build_content("k2", {"source": "tn"}, self._brief(), photos=[str(self.photo), str(self.photo)])

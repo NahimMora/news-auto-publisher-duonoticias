@@ -4,8 +4,8 @@ El motor usa estos dos archivos, que se configuran en `src/brand/brand.config.ts
 
 | Archivo | Uso | Estado actual |
 | --- | --- | --- |
-| `logo-horizontal.png` | Firma en reels, posts y cierre (isotipo + "DÚO NOTICIAS") | Extraído de `media/PlantillaPublicaciones.png` (672×144 px) |
-| `logo-mark.png` | Slides de carrusel y espacios chicos (solo el loro) | Extraído del mismo archivo (139×144 px) |
+| `logo-horizontal.png` | Firma en reels, posts y cierre (isotipo + "DÚO NOTICIAS") | Extraído de `media/PlantillaPublicaciones.png` (672×144 px). Aprobado como oficial el 17/10/2026 |
+| `logo-mark.png` | Slides de carrusel y espacios chicos (solo el loro) | Extraído del mismo archivo (139×144 px). Aprobado como oficial el 17/10/2026 |
 
 ## Cómo reemplazarlos por los oficiales
 

@@ -12,7 +12,12 @@ import { TextReveal } from "../engine/animations/TextReveal";
 import { REVEAL_LEAD } from "../engine/hooks/PhotoHook";
 import type { Beat } from "../engine/timeline";
 import { ramp, sec, useAnimationConfig } from "../engine/timing";
-import { DemoMark, EndCard, HookLayer, PieceShell, type TemplateProps, type TemplateSetup, useTemplateSetup } from "./shared";
+import { DemoMark, EndCard, HookLayer, NewsStrip, PieceShell, textBottom, type TemplateProps, type TemplateSetup, useTemplateSetup } from "./shared";
+
+/** Alto de la franja de foto: debajo van los textos (los videos siguen a pantalla completa). */
+const PHOTO_BAND = 0.58;
+/** Desde donde puede empezar la lista "Que se sabe" (solo toca el fundido de la foto). */
+const FACTS_TOP = 0.5;
 
 /**
  * A · BREAKING NEWS. Urgencia sin estridencia: etiqueta de ultimo momento desde
@@ -33,7 +38,16 @@ const BreakingInner: React.FC<TemplateProps> = ({ piece }) => {
   const scrimSize = fullScrim - holdP * fullScrim * 0.42;
 
   const stage = (
-    <MediaStage content={content} plan={plan} layout={layout} cut="punch" accent={accent} windowCenter={layout.format === "reel" ? 0.36 : 0.32} />
+    <MediaStage
+      content={content}
+      plan={plan}
+      layout={layout}
+      cut="punch"
+      accent={accent}
+      windowCenter={layout.format === "reel" ? 0.36 : 0.32}
+      band={{ top: 0, height: Math.round(height * PHOTO_BAND) }}
+      bandBackground={`linear-gradient(to bottom, ${brand.colors.inkSoft}, ${brand.colors.ink})`}
+    />
   );
 
   return (
@@ -70,6 +84,7 @@ const BreakingInner: React.FC<TemplateProps> = ({ piece }) => {
         </div>
       </Sequence>
 
+      <NewsStrip setup={setup} />
       <HookLayer setup={setup} template="breaking" />
 
       <Sequence from={plan.outro.start} durationInFrames={plan.outro.duration} name="Cierre">
@@ -89,7 +104,7 @@ const BottomBlock: React.FC<{ setup: TemplateSetup; children: React.ReactNode }>
         position: "absolute",
         left: layout.margin,
         width: layout.contentWidth,
-        bottom: layout.safeBottom,
+        bottom: textBottom(layout),
         display: "flex",
         flexDirection: "column",
         gap: 26 * layout.u,
@@ -151,9 +166,11 @@ const BreakingBeat: React.FC<{ setup: TemplateSetup; beat: Beat; isLast: boolean
           duration={0.5}
           delay={0.2}
         />
-        <Rise delay={0.5} distance={10}>
-          <MetaLine date={content.date} source={content.source.name} fontSize={layout.type.meta} color="rgba(255,255,255,0.8)" separatorColor={accent} />
-        </Rise>
+        {layout.format !== "reel" ? (
+          <Rise delay={0.5} distance={10}>
+            <MetaLine date={content.date} source={content.source.name} fontSize={layout.type.meta} color="rgba(255,255,255,0.8)" separatorColor={accent} />
+          </Rise>
+        ) : null}
       </BottomBlock>
     );
   }
@@ -180,25 +197,27 @@ const BreakingBeat: React.FC<{ setup: TemplateSetup; beat: Beat; isLast: boolean
           delay={d0 + 0.1}
           exitAt={exitAt}
         />
-        <Rise delay={d0 + 0.55} distance={14} exitAt={exitAt}>
-          <MetaLine date={content.date} source={content.source.name} fontSize={layout.type.meta} color="rgba(255,255,255,0.8)" separatorColor={accent} />
-        </Rise>
+        {layout.format !== "reel" ? (
+          <Rise delay={d0 + 0.55} distance={14} exitAt={exitAt}>
+            <MetaLine date={content.date} source={content.source.name} fontSize={layout.type.meta} color="rgba(255,255,255,0.8)" separatorColor={accent} />
+          </Rise>
+        ) : null}
       </BottomBlock>
     );
   }
 
-  if (beat.kind === "deck" || beat.kind === "highlight" || beat.kind === "quote") {
+  if (beat.kind === "deck") {
+    return <FactsList setup={setup} beat={beat} exitAt={exitAt} />;
+  }
+
+  if (beat.kind === "highlight" || beat.kind === "quote") {
     const isQuote = beat.kind === "quote" && content.quote;
-    const text = beat.kind === "deck" ? content.deck : beat.kind === "highlight" ? content.highlights[beat.index] : (content.quote?.text ?? "");
+    const text = beat.kind === "highlight" ? content.highlights[beat.index] : (content.quote?.text ?? "");
     const role = isQuote ? textRoles.quote : textRoles.deckStrong;
     const size = Math.round((isQuote ? 68 : beat.kind === "highlight" ? 64 : 60) * layout.u);
     const para = layoutParagraph(isQuote ? `“${text}”` : text, role, size, layout.contentWidth - 40 * layout.u);
     const label =
-      beat.kind === "deck"
-        ? "Qué se sabe"
-        : beat.kind === "highlight"
-          ? `${String(beat.index + 1).padStart(2, "0")} / ${String(content.highlights.length).padStart(2, "0")}`
-          : (content.quote?.author ?? "");
+      beat.kind === "highlight" ? `${String(beat.index + 1).padStart(2, "0")} / ${String(content.highlights.length).padStart(2, "0")}` : (content.quote?.author ?? "");
     return (
       <BottomBlock setup={setup}>
         <Rise delay={0.05} distance={12} exitAt={exitAt}>
@@ -214,6 +233,85 @@ const BreakingBeat: React.FC<{ setup: TemplateSetup; beat: Beat; isLast: boolean
     );
   }
   return null;
+};
+
+/**
+ * "QUE SE SABE": bajada y claves como lista numerada. Entran de a una y el
+ * cuerpo se elige para que la lista entera entre entre el titular compacto de
+ * arriba y el zocalo.
+ */
+const FactsList: React.FC<{ setup: TemplateSetup; beat: Beat; exitAt?: number }> = ({ setup, beat, exitAt }) => {
+  const { content, layout, accent } = setup;
+  const { fps, height } = useVideoConfig();
+  const u = layout.u;
+  const items = useMemo(
+    () => [beat.withDeck === false ? "" : content.deck, ...content.highlights.slice(0, beat.index)].filter(Boolean),
+    [content.deck, content.highlights, beat.index, beat.withDeck],
+  );
+  const badge = Math.round(56 * u);
+  // Mas ancho que el resto de los bloques: solo respeta un borde derecho minimo
+  // para no chocar con los iconos de Instagram (que estan mas abajo, a la derecha).
+  const listWidth = layout.width - layout.margin - Math.round((layout.format === "reel" ? 96 : 84) * u);
+  const indent = badge + Math.round(28 * u);
+  const gap = Math.round(34 * u);
+  const labelH = layout.type.meta * 1.1 * 1.4 + 26 * u;
+  // La lista vive debajo de la foto: entre FACTS_TOP y la base del bloque.
+  const top = content.videos.length ? layout.safeTop + layout.type.kicker * 3.1 + 150 * u : height * FACTS_TOP;
+  const maxH = height - textBottom(layout) - top - labelH;
+  const fitted = useMemo(() => {
+    const totalOf = (paras: ReturnType<typeof layoutParagraph>[]) => paras.reduce((acc, p) => acc + Math.max(p.height, badge), 0) + gap * (paras.length - 1);
+    // El cuerpo mas grande que entra; si ni al minimo entran todos, se quitan claves del final.
+    for (let n = items.length; n >= 1; n--) {
+      for (let size = Math.round(66 * u); size >= Math.round(40 * u); size -= 2) {
+        const paras = items.slice(0, n).map((t) => layoutParagraph(t, textRoles.deckStrong, size, listWidth - indent));
+        if (totalOf(paras) <= maxH) return paras;
+      }
+    }
+    return items.slice(0, 1).map((t) => layoutParagraph(t, textRoles.deckStrong, Math.round(40 * u), listWidth - indent));
+  }, [items, u, listWidth, indent, maxH, badge, gap]);
+  const beatSeconds = beat.duration / fps;
+  const step = Math.min(0.9, (beatSeconds * 0.35) / Math.max(1, fitted.length));
+  return (
+    <div style={{ position: "absolute", left: layout.margin, width: listWidth, bottom: textBottom(layout), display: "flex", flexDirection: "column", gap: 26 * u }}>
+      <Rise delay={0.05} distance={12} exitAt={exitAt}>
+        <div style={{ display: "flex", alignItems: "center", gap: 16 * u }}>
+          <GrowBar length={44 * u} thickness={Math.max(3, 6 * u)} color={accent} delay={0.05} />
+          <span style={{ ...roleStyle(textRoles.meta, layout.type.meta * 1.1), color: accent }}>{upper("Qué se sabe")}</span>
+        </div>
+      </Rise>
+      <div style={{ display: "flex", flexDirection: "column", gap }}>
+        {fitted.map((para, i) => {
+          const delay = 0.15 + i * step;
+          return (
+            <div key={i} style={{ display: "flex", gap: indent - badge, alignItems: "flex-start" }}>
+              <Rise delay={delay} distance={18} exitAt={exitAt}>
+                <div
+                  style={{
+                    width: badge,
+                    height: badge,
+                    background: i === 0 ? accent : "rgba(255,255,255,0.12)",
+                    border: i === 0 ? "none" : `${Math.max(2, 3 * u)}px solid ${accent}`,
+                    boxSizing: "border-box",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    marginTop: Math.max(0, (para.lineHeightPx - badge) / 2),
+                    ...roleStyle(textRoles.kicker, Math.round(30 * u)),
+                    color: i === 0 ? brand.colors.ink : brand.colors.white,
+                  }}
+                >
+                  {i + 1}
+                </div>
+              </Rise>
+              <div style={{ flex: 1 }}>
+                <TextReveal layout={para} role={textRoles.deckStrong} color={brand.colors.white} accent={accent} mode="line" delay={delay + 0.06} stagger={0.06} exitAt={exitAt} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 };
 
 /** Titular compacto arriba, debajo de la etiqueta, para quien entra tarde. */
