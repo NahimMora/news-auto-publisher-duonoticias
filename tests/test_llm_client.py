@@ -103,6 +103,50 @@ class LLMClientTests(unittest.TestCase):
         self.assertEqual(FakeHttpClient.calls[0]["headers"]["Authorization"], "Bearer sk")
 
 
+class FallbackTests(unittest.TestCase):
+    """Saturacion (503) del modelo principal: una vez con el respaldo lite, mas barato."""
+
+    def setUp(self) -> None:
+        self.calls = []
+        responses = self.responses = []
+
+        class Scripted(FakeHttpClient):
+            def post(inner, url, json=None):
+                self.calls.append({"url": url, "json": json})
+                return responses.pop(0)
+
+        patcher = patch.object(llm_client, "HttpClient", Scripted)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.cfg = LLMConfig("gemini", "gemini-3.1-flash-lite", "https://g/v1beta", "K", "minimal", fallback_model="gemini-3.5-flash-lite")
+
+    def test_503_uses_fallback_model(self) -> None:
+        self.responses += [httpx.Response(503, json={"error": {"code": 503, "message": "high demand"}}), _gemini_response('{"ok": 1}')]
+        payload, usage = llm_client.generate_json_with_usage("s", "u", config=self.cfg)
+        self.assertEqual(payload, {"ok": 1})
+        self.assertEqual(usage.model, "gemini-3.5-flash-lite")
+        self.assertEqual(usage.fallback_from, "gemini-3.1-flash-lite")
+        self.assertIn("gemini-3.5-flash-lite:generateContent", self.calls[1]["url"])
+
+    def test_gemini_2_models_get_no_thinking_level(self) -> None:
+        cfg = LLMConfig("gemini", "gemini-2.5-flash", "https://g/v1beta", "K", "minimal")
+        self.responses += [_gemini_response('{"ok": 1}')]
+        llm_client.generate_json_with_usage("s", "u", config=cfg)
+        self.assertNotIn("thinkingConfig", self.calls[0]["json"]["generationConfig"])
+
+    def test_other_errors_do_not_switch_model(self) -> None:
+        self.responses += [httpx.Response(400, json={"error": {"message": "bad request"}})]
+        with self.assertRaises(LLMError):
+            llm_client.generate_json_with_usage("s", "u", config=self.cfg)
+        self.assertEqual(len(self.calls), 1)
+
+    def test_fallback_can_be_disabled(self) -> None:
+        cfg = LLMConfig("gemini", "gemini-3.1-flash-lite", "https://g/v1beta", "K", "minimal", fallback_model="")
+        self.responses += [httpx.Response(503, json={"error": {"code": 503}})]
+        with self.assertRaises(LLMError):
+            llm_client.generate_json_with_usage("s", "u", config=cfg)
+
+
 class LLMConfigTests(unittest.TestCase):
     def test_defaults_to_gemini_flash_lite(self) -> None:
         with patch.dict(os.environ, {"LLM_PROVIDER": "", "GEMINI_MODEL": "", "GEMINI_API_KEY": "k"}):

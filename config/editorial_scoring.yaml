@@ -105,8 +105,9 @@ media:
 llm:
   # Version de los prompts: cambia la clave de cache de captions y evaluaciones.
   prompt_version: duo-2026-10-v1
-  # Tarifas por millon de tokens (USD) para estimar costos. Vacio = no se estiman.
-  # Cargarlas desde la tabla de precios vigente del modelo configurado en GEMINI_MODEL.
+  # Tarifas estandar por millon de tokens (USD), por modelo, para estimar costos con tokens reales.
+  # Fuente: https://ai.google.dev/gemini-api/docs/pricing (consultado 2026-10-18). Modelo sin
+  # tarifa = costo no estimado. El respaldo ante 503 es GEMINI_FALLBACK_MODEL (3.5-flash-lite).
   rates_per_million:
-    input: null
-    output: null
+    gemini-3.1-flash-lite: {input: 0.25, output: 1.50}
+    gemini-3.5-flash-lite: {input: 0.30, output: 2.50}

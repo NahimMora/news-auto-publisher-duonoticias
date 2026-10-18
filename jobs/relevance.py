@@ -260,8 +260,8 @@ class RelevanceEvaluator:
             output_tokens=output_tokens,
             latency_ms=usage.latency_ms if usage else 0,
             ok=ok,
-            error=error,
-            estimated_cost_usd=self.config.estimated_cost_usd(input_tokens or 0, output_tokens or 0) if usage else None,
+            error=error or (f"respaldo_por_saturacion_de:{usage.fallback_from}" if usage and usage.fallback_from else ""),
+            estimated_cost_usd=self.config.estimated_cost_usd(input_tokens or 0, output_tokens or 0, usage.model) if usage else None,
             cycle_id=cycle_id,
             content_keys=keys,
         )

@@ -64,6 +64,7 @@ class EditorialConfig:
     prompt_version: str
     rate_input_per_million: Optional[float]
     rate_output_per_million: Optional[float]
+    model_rates: Dict[str, Tuple[float, float]] = field(default_factory=dict)
 
     # -- fuentes ------------------------------------------------------------
 
@@ -109,14 +110,13 @@ class EditorialConfig:
     def max_age_hours(self, source: object, source_type: object = "") -> float:
         return float(self.max_content_age_hours.get(self.group_of(source, source_type), 24.0))
 
-    def estimated_cost_usd(self, input_tokens: int, output_tokens: int) -> Optional[float]:
-        if self.rate_input_per_million is None or self.rate_output_per_million is None:
-            return None
-        return round(
-            input_tokens / 1_000_000 * self.rate_input_per_million
-            + output_tokens / 1_000_000 * self.rate_output_per_million,
-            6,
-        )
+    def estimated_cost_usd(self, input_tokens: int, output_tokens: int, model: str = "") -> Optional[float]:
+        rates = self.model_rates.get(model)
+        if rates is None:
+            if self.rate_input_per_million is None or self.rate_output_per_million is None:
+                return None
+            rates = (self.rate_input_per_million, self.rate_output_per_million)
+        return round(input_tokens / 1_000_000 * rates[0] + output_tokens / 1_000_000 * rates[1], 6)
 
 
 def _section(payload: Mapping[str, Any], key: str) -> Dict[str, Any]:
@@ -208,4 +208,9 @@ def load_editorial_config(settings: PipelineSettings) -> EditorialConfig:
         prompt_version=str(llm.get("prompt_version") or "duo-v1"),
         rate_input_per_million=_float_or_none(rates.get("input")),
         rate_output_per_million=_float_or_none(rates.get("output")),
+        model_rates={
+            str(name): (float(value.get("input")), float(value.get("output")))
+            for name, value in rates.items()
+            if isinstance(value, Mapping) and value.get("input") is not None and value.get("output") is not None
+        },
     )

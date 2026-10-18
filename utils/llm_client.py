@@ -14,12 +14,16 @@ import json
 import os
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Dict, Optional, Tuple
 
 from utils.http_client import HttpClient
 
 GEMINI_DEFAULT_MODEL = "gemini-3.1-flash-lite"
+# Respaldo ante saturacion (HTTP 503) del modelo principal: el lite disponible de costo mas
+# parecido (0.30/2.50 USD por millon vs 0.25/1.50; ai.google.dev/gemini-api/docs/pricing,
+# 2026-10-18). gemini-2.5-flash-lite (mas barato) ya no se habilita para cuentas nuevas (404).
+GEMINI_DEFAULT_FALLBACK_MODEL = "gemini-3.5-flash-lite"
 GEMINI_DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 OPENAI_DEFAULT_MODEL = "gpt-4.1-mini"
 OPENAI_DEFAULT_BASE_URL = "https://api.openai.com/v1/responses"
@@ -41,6 +45,7 @@ class LLMConfig:
     base_url: str
     api_key: str = field(repr=False)
     thinking_level: str = ""
+    fallback_model: str = ""
 
     @property
     def ready(self) -> bool:
@@ -59,6 +64,13 @@ class LLMUsage:
     input_tokens: Optional[int] = None
     output_tokens: Optional[int] = None
     latency_ms: int = 0
+    # Modelo principal que fallo por saturacion cuando respondio el respaldo.
+    fallback_from: str = ""
+
+
+def is_overload_error(exc: Exception) -> bool:
+    text = str(exc)
+    return "HTTP 503" in text or "UNAVAILABLE" in text or "overloaded" in text.lower() or "high demand" in text.lower()
 
 
 def llm_config_from_env() -> LLMConfig:
@@ -76,6 +88,8 @@ def llm_config_from_env() -> LLMConfig:
         base_url=(os.getenv("GEMINI_BASE_URL") or GEMINI_DEFAULT_BASE_URL).strip().rstrip("/"),
         api_key=(os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "").strip(),
         thinking_level=(os.getenv("GEMINI_THINKING_LEVEL") or GEMINI_DEFAULT_THINKING_LEVEL).strip().lower(),
+        # GEMINI_FALLBACK_MODEL= (vacio) desactiva el respaldo.
+        fallback_model=os.getenv("GEMINI_FALLBACK_MODEL", GEMINI_DEFAULT_FALLBACK_MODEL).strip(),
     )
 
 
@@ -118,7 +132,15 @@ def generate_text_with_usage(
     if cfg.provider == "openai":
         text, usage = _openai(cfg, system_prompt, user_prompt, temperature, max_output_tokens, timeout)
     else:
-        text, usage = _gemini(cfg, system_prompt, user_prompt, temperature, max_output_tokens, json_output, timeout, response_schema)
+        try:
+            text, usage = _gemini(cfg, system_prompt, user_prompt, temperature, max_output_tokens, json_output, timeout, response_schema)
+        except LLMError as exc:
+            # Modelo principal saturado (503, ya reintentado con espera): una vez con el respaldo.
+            if not (cfg.fallback_model and cfg.fallback_model != cfg.model and is_overload_error(exc)):
+                raise
+            fallback = replace(cfg, model=cfg.fallback_model, fallback_model="")
+            text, usage = _gemini(fallback, system_prompt, user_prompt, temperature, max_output_tokens, json_output, timeout, response_schema)
+            usage.fallback_from = cfg.model
     usage.latency_ms = int((time.monotonic() - started) * 1000)
     return text, usage
 
@@ -188,7 +210,8 @@ def _gemini(
         generation_config["responseMimeType"] = "application/json"
     if response_schema:
         generation_config["responseSchema"] = response_schema
-    if cfg.thinking_level:
+    # thinkingLevel es de Gemini 3; los 2.x usan thinkingBudget (y en flash-lite viene apagado).
+    if cfg.thinking_level and not cfg.model.startswith("gemini-2"):
         generation_config["thinkingConfig"] = {"thinkingLevel": cfg.thinking_level}
     payload: Dict[str, Any] = {
         "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],

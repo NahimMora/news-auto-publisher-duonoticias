@@ -354,6 +354,18 @@ estaban fuera de vigencia. La persecución en la General Paz dio 51 < 55.
 - El flujo nuevo ignora las filas a medio procesar del flujo anterior. Quedan como historial y, si
   la nota reaparece en una fuente activa, se procesa desde cero.
 
+## 13 ter. Primer ciclo vigilado y respaldo de Gemini (2026-10-18)
+
+- Primer ciclo en vivo (`2026-10-18T00`, 10,8 min): 173 notas ingresadas, 60 evaluadas, 9 elegidas
+  (6 locales, 1 nacional, 2 Paparazzi). Se publicó 1 pieza (ANSES, Informate Salta), con caption
+  idéntico en IG y FB. Las otras 8 volvieron a la cola por HTTP 503 de Gemini ("high demand").
+- Respaldo ante 503: si `gemini-3.1-flash-lite` está saturado (después de los reintentos con espera),
+  la misma llamada se hace una vez con `gemini-3.5-flash-lite`, el lite disponible de costo más
+  parecido (0,30/2,50 frente a 0,25/1,50 USD por millón). `gemini-2.5-flash-lite`, que es más barato,
+  devolvió 404: ya no se habilita para cuentas nuevas. En `llm_usage` queda el modelo que respondió y
+  `respaldo_por_saturacion_de`.
+- Tarifas cargadas por modelo: `llm-usage` estima costos con tokens reales.
+
 ## 14. Pendientes y limitaciones reales
 
 1. **No se publicó nada en vivo** (por diseño). Falta la aprobación del propietario para habilitar
@@ -375,7 +387,7 @@ estaban fuera de vigencia. La persecución en la General Paz dio 51 < 55.
    nota local sigue con imagen.
 8. **Facebook**: el carrusel de video sale como un video con el primer tramo; los carruseles de
    imágenes siguen saliendo con la primera imagen (comportamiento previo).
-9. **Costos en dólares**: falta cargar las tarifas en `llm.rates_per_million`.
+9. **Costos en dólares**: tarifas cargadas el 2026-10-18; revisar si Google cambia precios.
 10. El `.env` de producción todavía define `X_MODE` con un modo de scraping. El código ya no lo lee;
     se puede borrar esa línea.
 11. Los cambios no están commiteados: esperan aprobación.
