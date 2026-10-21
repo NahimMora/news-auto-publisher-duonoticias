@@ -1,169 +1,145 @@
+# Fuentes activas de DUO Noticias (reestructuracion 2026-10).
+#
+# group define el cupo por el que compite cada fuente (config/editorial_scoring.yaml):
+#   local     -> 6 cupos por ciclo (Salta Capital y provincia)
+#   national  -> 2 cupos compartidos por TN e Infobae
+#   paparazzi -> 2 cupos propios
+#   x_feed    -> videos de X del intercambio de HolaSalta (cupos libres, o locales si el hecho es salteno)
+#
+# requires_video: la nota se descarta si no tiene un video real utilizable (sin reel de foto).
+# image_min_score: con requires_video, sin video usable igual sale como IMAGEN si la relevancia llega a
+#   este puntaje (decision 2026-10-18: nacionales muy relevantes se publican aunque no tengan video).
+# watermark_policy: "discard" descarta la nota si el recurso principal trae una marca de agua
+#   detectada; "informate_band" recorta la franja azul inferior de Informate Salta.
+# official: comunicados oficiales; solo pasan los de alto interes ciudadano (umbral propio).
+#
+# Fuentes eliminadas del sistema (2026-10-17): Nuevo Diario de Salta, Fiscales Penales Salta,
+# Justicia Salta, Noticias Argentinas, Minuto Uno, Elonce, Ambito, Aries Online, Elonce Salta,
+# y el scraping autonomo de cuentas de X. No agregarlas de nuevo.
 sources:
-  # --- ESPECTACULOS ---
-  - name: paparazzi
+  # --- SALTA LOCAL ---
+  - name: eltribuno
+    display_name: El Tribuno
     enabled: true
-    type: entertainment
-    scan_interval_minutes: 60
-    priority: 88
-    category: espectaculos
-    base_url: https://www.paparazzi.com.ar
+    group: local
+    category: salta
+    base_url: https://www.eltribuno.com
+    parser: eltribuno
+    max_items_per_scan: 15
+    watermark_policy: discard
+
+  - name: informatesalta
+    display_name: Informate Salta
+    enabled: true
+    group: local
+    category: salta
+    base_url: https://informatesalta.com.ar
+    parser: informatesalta
+    max_items_per_scan: 15
+    watermark_policy: informate_band
+
+  - name: quepasasalta
+    display_name: Qué Pasa Salta
+    enabled: true
+    group: local
+    category: salta
+    base_url: https://www.quepasasalta.com.ar
+    parser: quepasasalta
+    max_items_per_scan: 15
+    watermark_policy: discard
+
+  # --- SALTA OFICIALES (grupo local, umbral mas exigente) ---
+  - name: gobiernosalta
+    display_name: Gobierno de la Provincia de Salta
+    enabled: true
+    group: local
+    official: true
+    category: salta
+    base_url: https://www.salta.gob.ar
+    parser: saltagob
+    max_items_per_scan: 12
+
+  - name: policiasalta
+    display_name: Policía de Salta
+    enabled: true
+    group: local
+    official: true
+    category: policiales
+    base_url: https://prensa.policiadesalta.gob.ar
     parser: wordpress
     max_items_per_scan: 12
 
-  # --- NACIONAL ---
-  - name: tn
+  - name: municipalidadsalta
+    display_name: Municipalidad de Salta
     enabled: true
-    type: news
-    scan_interval_minutes: 45
-    priority: 76
+    group: local
+    official: true
+    category: salta
+    base_url: https://prensa.municipalidadsalta.gob.ar
+    parser: wordpress
+    max_items_per_scan: 12
+
+  # --- ESPECTACULOS ---
+  - name: paparazzi
+    display_name: Paparazzi
+    enabled: true
+    group: paparazzi
+    category: espectaculos
+    base_url: https://www.paparazzi.com.ar
+    parser: paparazzi
+    max_items_per_scan: 20
+    requires_video: true
+
+  # --- NACIONAL (compiten por los mismos 2 cupos) ---
+  - name: tn
+    display_name: TN
+    enabled: true
+    group: national
     category: nacional
     base_url: https://tn.com.ar
-    parser: rss_html
-    max_items_per_scan: 12
+    parser: arc
+    feeds:
+      - https://tn.com.ar/rss.xml
+    max_items_per_scan: 30
+    requires_video: true
+    image_min_score: 70
 
   - name: infobae
+    display_name: Infobae
     enabled: true
-    type: news
-    scan_interval_minutes: 45
-    priority: 74
+    group: national
     category: nacional
     base_url: https://www.infobae.com
-    parser: rss_html
-    max_items_per_scan: 12
+    parser: arc
+    feeds:
+      - https://www.infobae.com/arc/outboundfeeds/rss/
+    # El feed mezcla ediciones de otros paises: solo secciones argentinas o de alcance general.
+    exclude_path_prefixes:
+      # Resumenes horarios de agencias (EFE/AFP): no son notas.
+      - /america/agencias/
+      - /mexico/
+      - /peru/
+      - /colombia/
+      - /espana/
+      - /estados-unidos/
+      - /venezuela/
+      - /guatemala/
+      - /honduras/
+      - /el-salvador/
+      - /cuba/
+      - /chile/
+      - /uruguay/
+      - /paraguay/
+      - /bolivia/
+      - /ecuador/
+    max_items_per_scan: 40
+    requires_video: true
+    image_min_score: 70
 
-  - name: noticiasargentinas
-    enabled: true
-    type: news
-    scan_interval_minutes: 45
-    priority: 72
-    category: nacional
-    base_url: https://www.noticiasargentinas.com
-    parser: rss_html
-    max_items_per_scan: 10
-
-  - name: minutouno
-    enabled: true
-    type: news
-    scan_interval_minutes: 60
-    priority: 72
-    category: nacional
-    base_url: https://www.minutouno.com
-    parser: rss_html
-    max_items_per_scan: 10
-
-  - name: elonce
-    enabled: true
-    type: news
-    scan_interval_minutes: 60
-    priority: 68
-    category: nacional
-    base_url: https://www.elonce.com
-    parser: rss_html
-    max_items_per_scan: 8
-
-  - name: ambitofinanciero
-    enabled: true
-    type: news
-    scan_interval_minutes: 60
-    priority: 65
-    category: economia
-    base_url: https://www.ambito.com
-    parser: rss_html
-    max_items_per_scan: 8
-
-  # --- SALTA LOCAL ---
-  - name: eltribuno
-    enabled: true
-    type: local_news
-    scan_interval_minutes: 40
-    priority: 98
-    category: salta
-    base_url: https://www.eltribuno.com
-    parser: html_scraper
-    max_items_per_scan: 12
-
-  - name: nuevodiariodesalta
-    enabled: true
-    type: local_news
-    scan_interval_minutes: 40
-    priority: 96
-    category: salta
-    base_url: https://nuevodiariodesalta.com.ar
-    parser: html_scraper
-    max_items_per_scan: 10
-
-  # --- HOLASALTA (API propia, solo lectura: login + GET) ---
-  # Deshabilitada hasta la prueba controlada en FERNANDO (DUO-TASK-0006).
-  # Credenciales: HS_API_URL / HS_API_USERNAME / HS_API_PASSWORD en .env.
-  - name: holasalta
-    enabled: false
-    type: local_news
-    scan_interval_minutes: 40
-    priority: 97
-    category: salta
-    base_url: http://127.0.0.1:8000
-    parser: holasalta_api
-    max_items_per_scan: 12
-    include_x_video_jobs: true
-    max_x_video_jobs_per_scan: 8
-
-  # --- SALTA POLICIAL / JUDICIAL ---
-  - name: fiscalespenalesalta
-    enabled: true
-    type: local_news
-    scan_interval_minutes: 60
-    priority: 94
-    category: policial_salta
-    base_url: https://www.fiscalespenalesalta.gob.ar
-    parser: html_scraper
-    max_items_per_scan: 8
-
-  - name: justiciasalta
-    enabled: true
-    type: local_news
-    scan_interval_minutes: 60
-    priority: 92
-    category: policial_salta
-    base_url: https://www.justiciasalta.gov.ar
-    parser: html_scraper
-    max_items_per_scan: 8
-
-  # --- DESHABILITADOS ---
-  - name: ariesonline
-    enabled: false
-    type: local_news
-    scan_interval_minutes: 45
-    priority: 78
-    category: salta
-    base_url: https://ariesonline.com.ar
-    parser: html_scraper
-    max_items_per_scan: 8
-    note: "Bloqueado por Cloudflare 403 - requiere browser automation para activar"
-
-  - name: eloncesalta
-    enabled: false
-    type: local_news
-    scan_interval_minutes: 45
-    priority: 76
-    category: salta
-    base_url: https://eloncesalta.com.ar
-    parser: html_scraper
-    max_items_per_scan: 8
-    note: "Dominio DNS caido - verificar si el sitio sigue activo"
-
-  # --- X / VIRAL ---
+  # --- VIDEOS DE X (solo el intercambio autorizado de HolaSalta, sin scraping de cuentas) ---
   - name: x
+    display_name: Redes sociales
     enabled: true
-    type: x_video
-    scan_interval_minutes: 90
-    priority: 85
+    group: x_feed
     category: viral
-    base_url: https://x.com
-    parser: manual_first
-    max_items_per_scan: 8
-    handles:
-      - https://x.com/TTendenciaX
-      - https://x.com/home?lang=es
-      - https://x.com/BoludoscnAmarok
-      - https://x.com/ceciarmy
-      - https://x.com/therealbuni
+    parser: x_video_feed

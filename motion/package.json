@@ -1,0 +1,58 @@
+{
+  "name": "duo-motion",
+  "version": "1.0.0",
+  "description": "Duo Motion: sistema audiovisual programatico de Duo Noticias (Remotion + panel Next.js)",
+  "repository": {},
+  "license": "UNLICENSED",
+  "engines": {
+    "node": "^20.19.0 || ^22.13.0 || >=24"
+  },
+  "private": true,
+  "dependencies": {
+    "@fontsource-variable/archivo": "^5.3.0",
+    "@fontsource-variable/fraunces": "^5.3.0",
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "@remotion/bundler": "4.0.536",
+    "@remotion/cli": "4.0.536",
+    "@remotion/fonts": "4.0.536",
+    "@remotion/layout-utils": "4.0.536",
+    "@remotion/media": "4.0.536",
+    "@remotion/media-utils": "4.0.536",
+    "@remotion/player": "4.0.536",
+    "@remotion/renderer": "4.0.536",
+    "@remotion/transitions": "4.0.536",
+    "next": "^16.4.2",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "remotion": "4.0.536",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@remotion/eslint-config-flat": "4.0.536",
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^26.6.5",
+    "@types/react": "19.2.7",
+    "@types/web": "0.0.166",
+    "eslint": "10.12.0",
+    "postcss": "^8.5.30",
+    "prettier": "3.8.1",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.15",
+    "typescript": "5.9.3"
+  },
+  "scripts": {
+    "studio": "remotion studio",
+    "panel": "next dev -H 127.0.0.1 -p 3100",
+    "panel:build": "next build",
+    "panel:start": "next start -H 127.0.0.1 -p 3100",
+    "render": "tsx render/cli.ts",
+    "render:demos": "tsx render/demos.ts",
+    "bundle": "remotion bundle",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src && tsc --noEmit",
+    "upgrade": "remotion upgrade"
+  },
+  "allowScripts": {
+    "esbuild": false
+  }
+}

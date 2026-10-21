@@ -94,3 +94,24 @@ def test_news_without_titulo_sends_empty_title_not_none():
 
     row = {"raw_json": json.dumps({"url": "https://e/1"}), "processed_json": "{}", "kind": "news", "key": "k"}
     assert build_payload(row)["title"] == ""
+
+
+def test_configuration_error_does_not_log_secret_values(tmp_path, capsys):
+    # B1: pydantic's ValidationError message embeds input_value with every loaded setting.
+    from duonoticias_autopublicador.main import cli
+
+    env = tmp_path / ".env"
+    env.write_text("HS_API_PASSWORD=SECRETO-NO-LOGUEAR\nPOLL_INTERVAL_SECONDS=-1\n", encoding="utf-8")
+    assert cli(["--once", "--dry-run", "--env-file", str(env)]) == 2
+    logged = capsys.readouterr().err
+    assert "SECRETO-NO-LOGUEAR" not in logged
+    assert "duo_api_url" in logged
+
+
+def test_dry_run_uses_separate_state_db():
+    # B4: items processed during a dry run must not sit in the production outbox.
+    from pathlib import Path
+
+    from duonoticias_autopublicador.main import dry_run_state_path
+
+    assert dry_run_state_path(Path("state/state.db")) == Path("state/state.dry-run.db")

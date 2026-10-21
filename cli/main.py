@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 from jobs.pipeline import DuoPipeline
 from storage.settings import get_settings
 from utils import media_storage
+from utils.machine_guard import is_production_machine
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -38,17 +39,23 @@ def build_parser() -> argparse.ArgumentParser:
     scan_source = subparsers.add_parser("scan-source", help="Scan one source")
     scan_source.add_argument("--source", required=True)
     scan_source.add_argument("--max", dest="max_items", type=int, default=None)
-    scan_x = subparsers.add_parser("scan-x-feed", help="Scan configured X feeds when X_MODE is browser/api")
-    scan_x.add_argument("--max", dest="max_items", type=int, default=None)
+    cycle = subparsers.add_parser("cycle", help="Run one hourly cycle (no publica sin --live en FERNANDO)")
+    cycle.add_argument("--live", action="store_true")
+    cycle.add_argument("--max-news", type=int, default=None)
+    cycle.add_argument("--no-render", action="store_true", help="Produce caption y plan de formato sin renderizar")
+    simulate = subparsers.add_parser("simulate", help="Ciclo simulado sobre una base separada (nunca publica)")
+    simulate.add_argument("--db", default="", help="Base SQLite de simulacion (default data/simulation.sqlite3)")
+    simulate.add_argument("--max-news", type=int, default=None)
+    simulate.add_argument("--render", action="store_true", help="Renderizar las piezas elegidas")
+    simulate.add_argument("--no-scrape", action="store_true", help="Solo reevaluar lo que ya esta en la base")
+    usage = subparsers.add_parser("llm-usage", help="Llamadas, tokens y costo estimado de Gemini")
+    usage.add_argument("--hours", type=int, default=24)
+    subparsers.add_parser("queue-state", help="Conteo por estado de la cola editorial")
 
-    import_x = subparsers.add_parser("import-x-url", help="Import one X URL in manual mode")
+    import_x = subparsers.add_parser("import-x-url", help="Import one X URL (solo links puntuales, sin scraping de cuentas)")
     import_x.add_argument("--url", required=True)
     import_x.add_argument("--dry-run", action="store_true")
 
-    subparsers.add_parser("score-pending", help="Score pending items")
-    subparsers.add_parser("editorial-pending", help="Generate editorial JSON for scored items")
-    subparsers.add_parser("format-pending", help="Format editorialized items")
-    subparsers.add_parser("schedule-pending", help="Schedule formatted items")
 
     publish = subparsers.add_parser("publish-pending", help="Publish due items or preview safely")
     publish.add_argument("--max-posts", type=int, default=None)
@@ -86,6 +93,7 @@ def build_parser() -> argparse.ArgumentParser:
     test_source = subparsers.add_parser("test-source", help="Scan a source with max=1")
     test_source.add_argument("--source", required=True)
     subparsers.add_parser("autorun-health", help="Check 24/7 autorun health")
+    subparsers.add_parser("preflight", help="Gate for live 24/7 start: exit 1 if live publishing cannot work")
     subparsers.add_parser("doctor", help="Check runtime configuration")
     subparsers.add_parser("status", help="Show status summary")
 
@@ -105,7 +113,6 @@ def _add_legacy_aliases(subparsers: argparse._SubParsersAction[argparse.Argument
     _add_run_once(legacy_pipeline)
     legacy_scraper = subparsers.add_parser("run-scraper", help=argparse.SUPPRESS)
     legacy_scraper.add_argument("--max-news", type=int, default=None)
-    legacy_scraper.add_argument("--x-handles", nargs="*", default=None)
     legacy_publisher = subparsers.add_parser("run-publisher", help=argparse.SUPPRESS)
     legacy_publisher.add_argument("--live", action="store_true")
     legacy_publisher.add_argument("--dry-run", action="store_true")
@@ -125,6 +132,13 @@ def _add_legacy_aliases(subparsers: argparse._SubParsersAction[argparse.Argument
     report.add_argument("--date", dest="report_date", default=None)
     report.add_argument("--no-write", action="store_true")
 
+    formats = subparsers.add_parser("formats", help="Formatos (historias, resumen, servicio, top semanal...): vista previa o publicacion ahora")
+    formats.add_argument("--step", action="append", required=True, help="weather_story, weather_alert_post, digest, services, holidays, dollar, recap, weekly, comments, report")
+    formats.add_argument("--live", action="store_true", help="Publicar de verdad (solo FERNANDO); sin esto solo renderiza en data/formats/preview")
+    ops = subparsers.add_parser("ops-report", help="Reporte de operaciones por correo")
+    ops.add_argument("--send", action="store_true", help="Generar y enviar ahora")
+    ops.add_argument("--watchdog", action="store_true", help="Avisar si el servicio no late y enviar el reporte si esta vencido")
+
 
 def main(argv: List[str] | None = None) -> None:
     _configure_console_encoding()
@@ -132,6 +146,9 @@ def main(argv: List[str] | None = None) -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     args = build_parser().parse_args(argv)
+    if args.command == "simulate":
+        _print_json(_simulate(args))
+        return
     pipeline = DuoPipeline()
     settings = pipeline.settings
     command = args.command
@@ -139,50 +156,59 @@ def main(argv: List[str] | None = None) -> None:
     if command in {"run-once", "dry-run", "run-pipeline"}:
         dry_run = command == "dry-run" or bool(getattr(args, "dry_run", False))
         safe_mode = bool(getattr(args, "safe_mode", False)) or settings.safe_mode_default
-        result = pipeline.run_pipeline(
-            max_news=getattr(args, "max_news", None),
-            dry_run=dry_run or safe_mode,
-            max_posts=getattr(args, "max_posts", None),
-            safe_mode=safe_mode,
-        )
+        result = pipeline.run_cycle(live=not (dry_run or safe_mode), max_news=getattr(args, "max_news", None), render=not dry_run)
         _print_json(result)
         return
     if command == "run-24-7":
         _run_247(pipeline, args)
         return
+    if command == "formats":
+        from formats.runner import STEPS, run_steps
+
+        unknown = [s for s in args.step if s not in STEPS]
+        if unknown:
+            raise SystemExit(f"formatos desconocidos: {unknown}; opciones: {', '.join(STEPS)}")
+        live = bool(args.live)
+        if live and not (is_production_machine() and settings.live_publish_enabled):
+            raise SystemExit("--live solo en FERNANDO con DUO_LIVE_PUBLISH_ENABLED=true")
+        _print_json(run_steps(settings, pipeline.publisher, args.step, live=live, usage_sink=pipeline.store.record_llm_usage))
+        return
+    if command == "ops-report":
+        from datetime import datetime as _dt
+
+        from formats.report import OpsReport
+        from formats.runner import load_config
+        from formats.store import FormatsStore
+
+        reporter = OpsReport(settings, pipeline.publisher, FormatsStore(settings.sqlite_path), load_config(settings.base_dir).get("report") or {},
+                             usage_sink=pipeline.store.record_llm_usage)
+        now = _dt.now().astimezone()
+        if args.watchdog:
+            _print_json(reporter.watchdog(now))
+        elif args.send:
+            _print_json(reporter.send(now))
+        else:
+            _print_json({"due": reporter.due(now), "recipient": reporter.recipient})
+        return
     if command in {"scan-sources", "run-scraper"}:
-        count = pipeline.run_scraper(
-            max_news=getattr(args, "max_items", None) or getattr(args, "max_news", None),
-            x_handles=getattr(args, "x_handles", None) or None,
-        )
-        _print_json({"ingested": count})
+        _print_json(pipeline.run_scraper(max_news=getattr(args, "max_items", None) or getattr(args, "max_news", None), dry_run=True))
         return
     if command in {"scan-source", "test-source"}:
         count = pipeline.scan_source(args.source, max_items=getattr(args, "max_items", None) or 1)
         _print_json({"source": args.source, "ingested": count})
         return
-    if command == "scan-x-feed":
-        if settings.x_mode == "manual":
-            _print_json({"scanned": 0, "mode": "manual", "reason": "Use import-x-url in X_MODE=manual"})
-            return
-        rows = pipeline.x_extractor.extract(limit_per_handle=args.max_items or 5)
-        _print_json({"ingested": pipeline._ingest_rows(rows), "mode": settings.x_mode})
+    if command == "cycle":
+        _print_json(pipeline.run_cycle(live=bool(args.live), max_news=args.max_news, render=not args.no_render))
+        return
+    if command == "llm-usage":
+        _print_json(pipeline.llm_usage(hours=args.hours))
+        return
+    if command == "queue-state":
+        _print_json(pipeline.store.queue_counts())
         return
     if command == "import-x-url":
         key = pipeline.import_x_url(args.url, dry_run=args.dry_run)
         _print_json({"content_key": key, "url": args.url, "dry_run": args.dry_run})
-        return
-    if command == "score-pending":
-        _print_json({"scored": pipeline.run_scoring()})
-        return
-    if command == "editorial-pending":
-        _print_json({"editorialized": pipeline.run_editorial()})
-        return
-    if command == "format-pending":
-        _print_json({"formatted": pipeline.run_formatter()})
-        return
-    if command == "schedule-pending":
-        _print_json({"scheduled": pipeline.run_scheduler()})
         return
     if command in {"publish-pending", "run-publisher"}:
         live = bool(getattr(args, "live", False)) and settings.live_publish_enabled
@@ -192,8 +218,7 @@ def main(argv: List[str] | None = None) -> None:
             preview = pipeline.preview_publications(max_posts=getattr(args, "max_posts", None), safe_mode=True)
             _print_json({"live": False, "blocked_reason": "safe_preview", "content_type": content_type, "preview": preview, "count": len(preview)})
             return
-        force_due = bool(getattr(args, "force_due", False))
-        published = pipeline.run_publisher(max_posts=args.max_posts, safe_mode=False, content_type=ct, force_due=force_due)
+        published = pipeline.run_publisher()
         analytics = pipeline.run_analytics() if published > 0 else 0
         _print_json({"live": True, "content_type": content_type, "published": published, "analytics_collected": analytics})
         return
@@ -237,6 +262,12 @@ def main(argv: List[str] | None = None) -> None:
     if command == "autorun-health":
         _print_json(_autorun_health(pipeline))
         return
+    if command == "preflight":
+        payload = _preflight(pipeline)
+        _print_json(payload)
+        if not payload["ok"]:
+            raise SystemExit(1)
+        return
     if command in {"doctor", "status"}:
         payload = _doctor(pipeline) if command == "doctor" else pipeline.show_stats()
         _print_json(payload)
@@ -255,195 +286,102 @@ def main(argv: List[str] | None = None) -> None:
         return
 
 
+def _simulate(args: argparse.Namespace) -> dict[str, Any]:
+    """Ciclo completo sobre una base de simulacion: nunca publica ni toca la base real."""
+    from dataclasses import replace
+
+    base = get_settings()
+    db = Path(args.db) if args.db else base.data_dir / "simulation.sqlite3"
+    settings = replace(
+        base,
+        sqlite_path=db,
+        live_publish_enabled=False,
+        enable_duo_web=False,
+        # Estado propio del intercambio de HolaSalta: el archivo compartido se lee igual (solo lectura).
+        x_video_feed_state_path=db.with_name(db.stem + "_x_feed_state.json"),
+    )
+    pipeline = DuoPipeline(settings)
+    pipeline.simulate_x_feed = True
+    summary = pipeline.run_cycle(live=False, max_news=args.max_news, render=bool(args.render), scrape=not args.no_scrape)
+    summary["simulation_db"] = str(db)
+    summary["llm_usage_last_hour"] = pipeline.llm_usage(hours=1)
+    return summary
+
+
+def _current_cycle_id(pipeline: DuoPipeline) -> str:
+    from jobs.pipeline import cycle_id_for
+
+    return cycle_id_for(datetime.now(timezone.utc), ZoneInfo(pipeline.settings.timezone))
+
+
 def _run_247(pipeline: DuoPipeline, args: argparse.Namespace) -> None:
-    interval = max(1.0, float(args.interval_minutes)) * 60
     safe_mode = not bool(args.live)
-    align_to_slots = bool(args.live)
     logger = logging.getLogger("duo.autorun")
     _configure_runtime_file_logging(pipeline.settings)
     with _runtime_lock(pipeline.settings) as acquired:
         if not acquired:
+            # Lock de proceso: nunca dos ciclos simultaneos (la tarea relanza cada 5 min).
             message = "autorun ya esta ejecutandose; se omite esta instancia"
             logger.warning(message)
             print(message)
             return
-        _run_247_locked(pipeline, args, interval=interval, safe_mode=safe_mode, align_to_slots=align_to_slots)
+        _run_247_locked(pipeline, args, safe_mode=safe_mode)
 
 
-def _run_247_locked(
-    pipeline: DuoPipeline,
-    args: argparse.Namespace,
-    *,
-    interval: float,
-    safe_mode: bool,
-    align_to_slots: bool,
-) -> None:
+def _run_247_locked(pipeline: DuoPipeline, args: argparse.Namespace, *, safe_mode: bool) -> None:
+    """Un ciclo por hora alineado a ``cycle.align_minute``. Un ciclo lento no se pisa con el
+    siguiente: se espera al proximo comienzo de hora libre."""
     logger = logging.getLogger("duo.autorun")
+    cycles = 0
     try:
-        cycles = 0
-        initial_sleep = _seconds_until_initial_cycle(
-            pipeline,
-            interval,
-            align_to_slots=align_to_slots,
-        )
-        if initial_sleep > 0:
-            _log_and_print(logger, f"esperando {int(initial_sleep)} segundos hasta el proximo bloque")
-            _write_runtime_heartbeat(
-                pipeline,
-                {
-                    "state": "waiting",
-                    "safe_mode": safe_mode,
-                    "live": not safe_mode,
-                    "next_sleep_seconds": int(initial_sleep),
-                    "next_slot_seconds": int(initial_sleep),
-                    "last_error": "",
-                },
-            )
-            time.sleep(initial_sleep)
         while True:
+            last_id = str(_read_runtime_heartbeat(pipeline.settings).get("last_cycle_id") or "")
+            current = _current_cycle_id(pipeline)
+            if current == last_id:
+                wait = _seconds_until_next_cycle(pipeline)
+                _write_runtime_heartbeat(pipeline, {"state": "waiting", "live": not safe_mode, "safe_mode": safe_mode,
+                                                    "next_sleep_seconds": int(wait), "last_cycle_id": last_id, "last_error": ""})
+                _log_and_print(logger, f"ciclo {current} ya corrido; esperando {int(wait)} s")
+                time.sleep(wait)
+                continue
             cycles += 1
             started_dt = datetime.now(timezone.utc).replace(microsecond=0)
-            started = started_dt.astimezone().strftime("%Y-%m-%d %H:%M:%S")
-            result: dict[str, Any] = {}
+            _log_and_print(logger, f"[{started_dt.astimezone().strftime('%Y-%m-%d %H:%M:%S')}] ciclo {current} iniciado live={not safe_mode}")
+            _write_runtime_heartbeat(pipeline, {"state": "running", "cycle": cycles, "started_at": started_dt.isoformat(),
+                                                "safe_mode": safe_mode, "live": not safe_mode, "last_cycle_id": last_id, "last_error": ""})
             last_error = ""
-            _log_and_print(logger, f"[{started}] ciclo iniciado safe_mode={safe_mode}")
-            _write_runtime_heartbeat(
-                pipeline,
-                {
-                    "state": "running",
-                    "cycle": cycles,
-                    "started_at": started_dt.isoformat(),
-                    "safe_mode": safe_mode,
-                    "live": not safe_mode,
-                    "last_error": "",
-                },
-            )
             try:
-                result = pipeline.run_pipeline(
-                    max_news=args.max_news,
-                    dry_run=safe_mode,
-                    max_posts=args.max_posts,
-                    safe_mode=safe_mode,
-                    fixed_slot_publish=True,
-                )
-                payload = json.dumps(result, ensure_ascii=False)
-                _log_and_print(logger, payload)
+                result = pipeline.run_cycle(live=not safe_mode, max_news=args.max_news)
+                _log_and_print(logger, json.dumps({k: v for k, v in result.items() if k != "decisions"}, ensure_ascii=False, default=str))
             except Exception as exc:
                 last_error = str(exc)
                 logger.exception("cycle failed: %s", exc)
                 result = {"error": last_error}
+            wait = 0 if (args.cycles and cycles >= args.cycles) else _seconds_until_next_cycle(pipeline)
+            heartbeat = _heartbeat_payload(cycle=cycles, started_at=started_dt, result={k: v for k, v in result.items() if k != "decisions"},
+                                           safe_mode=safe_mode, last_error=last_error, next_sleep_seconds=int(wait))
+            heartbeat["last_cycle_id"] = current
+            _write_runtime_heartbeat(pipeline, heartbeat)
             if args.cycles and cycles >= args.cycles:
-                _write_runtime_heartbeat(
-                    pipeline,
-                    _heartbeat_payload(
-                        cycle=cycles,
-                        started_at=started_dt,
-                        result=result,
-                        safe_mode=safe_mode,
-                        last_error=last_error,
-                        next_sleep_seconds=0,
-                    ),
-                )
                 _log_and_print(logger, "ciclos solicitados completados")
                 break
-            sleep_seconds = _seconds_until_next_cycle(
-                pipeline,
-                interval,
-                align_to_slots=align_to_slots,
-            )
-            _write_runtime_heartbeat(
-                pipeline,
-                _heartbeat_payload(
-                    cycle=cycles,
-                    started_at=started_dt,
-                    result=result,
-                    safe_mode=safe_mode,
-                    last_error=last_error,
-                    next_sleep_seconds=int(sleep_seconds),
-                ),
-            )
-            _log_and_print(logger, f"durmiendo {int(sleep_seconds)} segundos")
-            time.sleep(sleep_seconds)
+            _log_and_print(logger, f"durmiendo {int(wait)} segundos")
+            time.sleep(wait)
     except KeyboardInterrupt:
-        _write_runtime_heartbeat(
-            pipeline,
-            {
-                "state": "stopped",
-                "safe_mode": safe_mode,
-                "live": not safe_mode,
-                "last_error": "KeyboardInterrupt",
-            },
-        )
+        _write_runtime_heartbeat(pipeline, {"state": "stopped", "safe_mode": safe_mode, "live": not safe_mode, "last_error": "KeyboardInterrupt"})
         _log_and_print(logger, "CTRL+C recibido. Cierre limpio.")
 
 
-def _seconds_until_initial_cycle(
-    pipeline: DuoPipeline,
-    interval: float,
-    *,
-    align_to_slots: bool,
-) -> float:
-    if not align_to_slots:
-        return 0.0
-    if pipeline._active_schedule_slot():
-        return 0.0
-    slot_sleep = _seconds_until_next_slot(
-        schedule_slots=pipeline.settings.schedule_slots,
-        timezone_name=pipeline.settings.timezone,
-    )
-    if slot_sleep is None:
-        return interval
-    return max(1.0, slot_sleep)
+def _seconds_until_next_cycle(pipeline: DuoPipeline) -> float:
+    zone = ZoneInfo(pipeline.settings.timezone)
+    now = datetime.now(zone)
+    minute = int(pipeline.config.align_minute) % 60
+    target = now.replace(minute=minute, second=5, microsecond=0)
+    if target <= now:
+        from datetime import timedelta
 
-
-def _seconds_until_next_cycle(
-    pipeline: DuoPipeline,
-    interval: float,
-    *,
-    align_to_slots: bool = False,
-) -> float:
-    slot_sleep = _seconds_until_next_slot(
-        schedule_slots=pipeline.settings.schedule_slots,
-        timezone_name=pipeline.settings.timezone,
-    )
-    if slot_sleep is None:
-        return interval
-    if align_to_slots:
-        return max(1.0, slot_sleep)
-    return max(1.0, min(interval, slot_sleep))
-
-
-def _seconds_until_next_slot(*, schedule_slots: tuple[str, ...], timezone_name: str) -> float | None:
-    if not schedule_slots:
-        return None
-    try:
-        zone = ZoneInfo(timezone_name)
-    except Exception:
-        return None
-    now = datetime.now(zone).replace(microsecond=0)
-    candidates = []
-    for day_offset in (0, 1):
-        day = now.date()
-        if day_offset:
-            day = day.fromordinal(day.toordinal() + day_offset)
-        for slot in schedule_slots:
-            try:
-                hour, minute = (int(part) for part in str(slot).split(":", 1))
-            except Exception:
-                continue
-            candidate = datetime(
-                year=day.year,
-                month=day.month,
-                day=day.day,
-                hour=hour,
-                minute=minute,
-                tzinfo=zone,
-            )
-            if candidate > now:
-                candidates.append(candidate)
-    if not candidates:
-        return None
-    return (min(candidates) - now).total_seconds()
+        target += timedelta(hours=1)
+    return max(5.0, (target - now).total_seconds())
 
 
 def _doctor(pipeline: DuoPipeline) -> dict[str, Any]:
@@ -454,11 +392,10 @@ def _doctor(pipeline: DuoPipeline) -> dict[str, Any]:
         folder.mkdir(parents=True, exist_ok=True)
     return {
         "env": {
-            "openai_model": settings.openai_model,
-            "openai_api_key": "configured" if settings.openai_api_key else "missing",
-            "x_mode": settings.x_mode,
-            "x_bearer_token": "configured" if os.getenv("X_BEARER_TOKEN", "").strip() else "missing",
-            "x_session_state": "present" if settings.x_session_storage_state.exists() else "missing_or_unused",
+            "llm_provider": settings.llm.provider,
+            "llm_model": settings.llm.model,
+            "llm_api_key": "configured" if settings.llm.ready else "missing",
+            "x_video_feed": str(settings.x_video_feed_path),
             "live_publish_enabled": settings.live_publish_enabled,
             "enable_instagram": settings.enable_instagram,
             "enable_facebook": settings.enable_facebook,
@@ -491,13 +428,12 @@ def _doctor(pipeline: DuoPipeline) -> dict[str, Any]:
             "thresholds_path": str(settings.thresholds_config_path),
             "editorial_policy_path": str(settings.editorial_policy_path),
             "safe_mode_default": settings.safe_mode_default,
-            "schedule_slots": list(settings.schedule_slots),
-            "videos_per_slot": settings.schedule_videos_per_slot,
-            "posts_per_slot": settings.schedule_posts_per_slot,
-            "publish_default_max_posts": settings.publish_default_max_posts,
-            "publish_slot_window_minutes": settings.publish_slot_window_minutes,
-            "publish_max_content_age_hours": settings.publish_max_content_age_hours,
-            "publish_require_same_local_day": settings.publish_require_same_local_day,
+            "editorial_scoring_path": str(settings.editorial_scoring_path),
+            "cycle_minutes": pipeline.config.interval_minutes,
+            "max_per_cycle": pipeline.config.max_per_cycle,
+            "group_quotas": pipeline.config.group_quotas,
+            "free_slots": pipeline.config.free_slots,
+            "pending_ttl_hours": pipeline.config.pending_ttl_hours,
         },
         "internet": _internet_check(),
         "queue": pipeline.show_queue(),
@@ -616,6 +552,73 @@ def _autorun_health(pipeline: DuoPipeline) -> dict[str, Any]:
             "min_publish_content_timestamp": min_extracted_at,
         },
         "queue": counts,
+    }
+
+
+def _preflight(pipeline: DuoPipeline) -> dict[str, Any]:
+    """Everything a live 24/7 start needs; only names and states, never secret values."""
+    settings = pipeline.settings
+    critical: list[str] = []
+    warnings: list[str] = []
+
+    if not is_production_machine():
+        critical.append("not_production_machine")
+    if not settings.live_publish_enabled:
+        critical.append("DUO_LIVE_PUBLISH_ENABLED_false_or_not_production_machine")
+    if not _sqlite_accessible(pipeline):
+        critical.append("sqlite_unavailable")
+    sources = pipeline.source_registry.enabled_source_names()
+    if not sources:
+        critical.append("no_enabled_sources")
+    if settings.x_video_feed_enabled and not settings.x_video_feed_path.exists():
+        # No frena: HolaSalta puede no haberlo escrito todavia; se reintenta cada ciclo.
+        warnings.append("x_video_feed_file_missing")
+    if not settings.llm.ready:
+        # Without it editorial silently falls back to template captions.
+        critical.append(f"{settings.llm.api_key_env}_missing")
+
+    platforms: dict[str, str] = {}
+    if settings.enable_instagram:
+        ready = bool(settings.ig_access_token and settings.ig_user_id)
+        platforms["instagram"] = "ready" if ready else "missing_credentials"
+        if ready and not _media_storage_status().get("ready"):
+            platforms["instagram"] = "media_storage_not_ready"
+    if settings.enable_facebook:
+        platforms["facebook"] = "ready" if settings.fb_access_token and settings.fb_page_id else "missing_credentials"
+    if settings.enable_duo_web:
+        if pipeline.duo_web is None:
+            platforms["duo_web"] = f"not_configured_mode_{settings.duo_web_mode}"
+        else:
+            platforms["duo_web"] = "ready"
+    for name, state in platforms.items():
+        if state != "ready":
+            critical.append(f"{name}_{state}")
+    if not platforms:
+        critical.append("no_enabled_publish_platforms")
+
+    for binary in (settings.ffmpeg_path, settings.ffprobe_path):
+        if shutil.which(binary) is None:
+            warnings.append(f"{Path(binary).name}_missing")
+    if _internet_check() != "ok":
+        warnings.append("internet_unavailable")
+    # Motor audiovisual: si falta, el formateador legado produce las piezas (no bloquea).
+    motion = pipeline.formatter.motion
+    motion_state = "ready" if motion.enabled else ("disabled" if not motion.config.enabled else "unavailable_legacy_fallback")
+    if motion_state == "unavailable_legacy_fallback":
+        warnings.append("motion_engine_unavailable_legacy_fallback")
+    for platform, entry in pipeline.rate_limits.snapshot().items():
+        warnings.append(f"{platform}_rate_limited_until_{entry.get('until', '')}")
+
+    return {
+        "ok": not critical,
+        "checked_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        "machine": os.getenv("COMPUTERNAME", ""),
+        "critical": critical,
+        "warnings": warnings,
+        "sources": sources,
+        "platforms": platforms,
+        "llm": {"provider": settings.llm.provider, "model": settings.llm.model},
+        "motion_engine": motion_state,
     }
 
 
@@ -751,7 +754,7 @@ def _write_runtime_heartbeat(pipeline: DuoPipeline, payload: dict[str, Any]) -> 
         "updated_at": now.isoformat(),
         "pid": os.getpid(),
         "timezone": pipeline.settings.timezone,
-        "active_slot": pipeline._active_schedule_slot(),
+        "cycle_id": _current_cycle_id(pipeline),
         **payload,
     }
     path = _runtime_heartbeat_path(pipeline.settings)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import unittest
@@ -107,7 +108,7 @@ class MetaGraphPublisherTests(unittest.TestCase):
             ):
                 self.assertEqual(publisher._publish_instagram(package), "media-id")
 
-        create_mock.assert_called_once_with("caption")
+        create_mock.assert_called_once_with("caption", {})
         upload_mock.assert_called_once()
         wait_mock.assert_called_once_with("container-id")
 
@@ -154,7 +155,7 @@ class MetaGraphPublisherTests(unittest.TestCase):
             ):
                 self.assertEqual(publisher._publish_instagram(package), "media-id")
 
-        create_mock.assert_called_once_with("caption")
+        create_mock.assert_called_once_with("caption", {})
         upload_mock.assert_called_once()
         url_mock.assert_called_once()
         wait_mock.assert_called_once_with("url-container-id")
@@ -340,9 +341,43 @@ class MetaGraphPublisherTests(unittest.TestCase):
 
         self.assertEqual(
             seen_fields,
-            ["id,permalink_url,comments.limit(0).summary(true),likes.limit(0).summary(true)"],
+            ["id,permalink_url,shares,comments.limit(0).summary(true),likes.limit(0).summary(true),insights.metric(post_media_view,post_total_media_view_unique)"],
         )
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReelCoverAndTagsTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.publisher = MetaGraphPublisher.__new__(MetaGraphPublisher)
+
+    def test_reel_extras_send_cover_and_tags(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cover = Path(tmp) / "cover.jpg"
+            cover.write_bytes(b"jpg")
+            package = FormattedPackage(content_key="k", post_type="reel", caption="c", meta={"cover_path": str(cover), "ig_user_tags": ["policiadesalta"]})
+            with patch("publishers.meta_api.legacy_ig._resolve_media_url", return_value="https://cdn.test/cover.jpg"):
+                extra = self.publisher._reel_extras(package)
+        self.assertEqual(extra["cover_url"], "https://cdn.test/cover.jpg")
+        self.assertEqual(json.loads(extra["user_tags"]), [{"username": "policiadesalta"}])
+
+    def test_image_tags_have_coordinates(self) -> None:
+        package = FormattedPackage(content_key="k", post_type="image", caption="c", meta={"ig_user_tags": ["a", "b"]})
+        tags = json.loads(self.publisher._image_tag_extras(package)["user_tags"])
+        self.assertEqual([t["username"] for t in tags], ["a", "b"])
+        self.assertTrue(all(0 <= t["x"] <= 1 and 0 <= t["y"] <= 1 for t in tags))
+
+    def test_rejected_tags_publish_without_them(self) -> None:
+        calls = []
+
+        def create(data):
+            calls.append(dict(data))
+            if "user_tags" in data:
+                raise RuntimeError("user cannot be tagged")
+            return "container"
+
+        result = MetaGraphPublisher._with_tags_fallback(create, {"user_tags": "[]", "cover_url": "u"})
+        self.assertEqual(result, "container")
+        self.assertEqual(calls[-1], {"cover_url": "u"})

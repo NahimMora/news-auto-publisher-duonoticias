@@ -1,0 +1,79 @@
+# Formatos de DUO fuera del flujo de noticias (ver docs/FORMATOS.md).
+# Las horas son locales (America/Argentina/Salta). Cada turno sale una sola vez por dia;
+# si el ciclo de esa hora no corre, el turno se intenta hasta `hour + window_hours`.
+enabled: true
+platforms: [instagram, facebook]
+# Publicaciones de Instagram por API (cupo de 100 cada 24 h, historias incluidas) que las historias
+# dejan libres. Las noticias ya reservan 15 para formatos (quotas.ig_reserve_for_formats).
+ig_reserve: 5
+window_hours: 3
+
+stories:
+  enabled: true
+  max_per_day: 15
+  # Por ciclo: historia de "nuevo post" para las mejores notas locales publicadas.
+  post_stories_per_cycle: 1
+  post_story_groups: [local]
+  # Notas marcadas como urgentes: historia de "Ultimo momento" al publicarse (cualquier grupo).
+  breaking: true
+
+weather_story: {enabled: true, hour: 7}
+# Post del clima solo cuando el SMN tiene alerta (amarilla o mas) para Salta.
+weather_alert_post: {enabled: true, min_level: 2}
+digest: {enabled: true, hour: 8, size: 5, story: true}
+services: {enabled: true, story_hour: 9, post_on_change: true}
+holidays: {enabled: true, hour: 10, days_before: 3, monday_of_week: true}
+dollar: {enabled: true, hour: 11, weekdays_only: true}
+recap: {enabled: true, hour: 20, size: 5}
+# weekday: 0 = lunes ... 6 = domingo
+weekly: {enabled: true, weekday: 6, hour: 20, size: 5}
+
+updates:
+  enabled: true
+  story: true
+  facebook_edit: true
+  instagram_comment: true
+
+comments:
+  enabled: true
+  # shadow: se evaluan y se guardan sin publicar; auto: shadow durante shadow_days y despues
+  # se publican; live: se publican siempre; off: nada.
+  mode: auto
+  shadow_days: 3
+  daily_cap: 15
+  lookback_hours: 24
+  max_per_cycle: 20
+  # Posts informativos: Paparazzi queda afuera.
+  exclude_groups: [paparazzi]
+
+report:
+  enabled: true
+  every_days: 3
+  hour: 9
+  recipient: nahimsalta@gmail.com
+  # Si el servicio no actualiza su latido en este tiempo, el vigilante manda un aviso.
+  stale_hours: 2
+  # Avisos puntuales de fallas (formats/alerts.py), cada hora con el vigilante. Un problema
+  # abierto se repite cada repeat_hours; cuando se arregla llega un "volvio a funcionar".
+  alerts:
+    enabled: true
+    repeat_hours: 12
+    # Ventana para contar publicaciones e IA fallidas.
+    window_hours: 2
+    scraper_fails_in_row: 2
+    # Horas sin notas nuevas de una fuente antes de avisar. Medido 18-20/10: las locales llegan a
+    # 10 h de noche, TN/Infobae nunca pasan de 2 h, las oficiales hasta 19 h (y menos los fines de semana).
+    scraper_silence_hours:
+      default: 13
+      tn: 4
+      infobae: 4
+      paparazzi: 10
+      gobiernosalta: 40
+      municipalidadsalta: 40
+      policiasalta: 40
+    cycles_without_publishing: 3
+    min_waiting_for_alert: 5
+    production_errors: 3
+    llm_failures: 3
+    service_down_hours: 12
+    min_free_disk_gb: 5

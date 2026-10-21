@@ -50,5 +50,5 @@ Live publishing is blocked unless both are true:
 - CLI: `--live`
 
 Default automated blocks are `09:00,12:00,15:00,18:00,21:00`.
-Each block schedules up to `DUO_SCHEDULE_VIDEOS_PER_SLOT=5` reels/videos and `DUO_SCHEDULE_POSTS_PER_SLOT=10` image/carousel news posts.
+Each block schedules the reels and posts set for it in `slot_quotas` (`config/thresholds.yaml`), never more than 6 posts and 4 reels per day.
 In `run-24-7`, live publishing is deferred unless the current time is inside `DUO_PUBLISH_SLOT_WINDOW_MINUTES` after a configured block.

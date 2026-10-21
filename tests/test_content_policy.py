@@ -1,281 +1,132 @@
+"""Politica tecnica: sin listas de temas; solo fuente, validez, vigencia y video obligatorio."""
 from __future__ import annotations
 
-import os
+import dataclasses
+import json
 import unittest
-from datetime import datetime, timedelta
-from unittest.mock import patch
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta, timezone
 
 from jobs.content_policy import ContentPolicy
 from storage.settings import get_settings
 
+NOW = datetime(2026, 10, 17, 18, 0, tzinfo=timezone.utc)
+BODY = "Texto de la nota con suficientes palabras para no ser considerada vacia. " * 3
+
+
+def row(source: str = "eltribuno", *, title: str = "Corte de agua en zona sur de la ciudad", hours_old: float = 2, video: bool = False, **extra) -> dict:
+    assets = [{"kind": "image", "remote_url": "https://example.test/a.jpg"}]
+    if video:
+        assets.append({"kind": "video", "remote_url": "https://example.test/v.mp4"})
+    payload = {
+        "content_key": "k",
+        "source": source,
+        "source_type": "x_video" if source == "x" else "news",
+        "title": title,
+        "summary": "Bajada de la nota",
+        "body_text": BODY,
+        "created_at": (NOW - timedelta(hours=hours_old)).isoformat(),
+        "assets_json": json.dumps(assets),
+    }
+    payload.update(extra)
+    return payload
+
 
 class ContentPolicyTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.env = patch.dict(
-            os.environ,
-            {
-                "DUO_TIMEZONE": "America/Buenos_Aires",
-                "DUO_PUBLISH_REQUIRE_SAME_LOCAL_DAY": "true",
-            },
-            clear=False,
-        )
-        self.env.start()
         get_settings.cache_clear()
+        self.policy = ContentPolicy(get_settings())
 
-    def tearDown(self) -> None:
-        self.env.stop()
-        get_settings.cache_clear()
+    def check(self, payload: dict):
+        return self.policy.evaluate_row(payload, now=NOW)
 
-    def test_accepts_today_political_content(self) -> None:
-        settings = get_settings()
-        policy = ContentPolicy(settings)
-        today = datetime.now(ZoneInfo(settings.timezone)).replace(hour=10, minute=0, second=0, microsecond=0)
-        decision = policy.evaluate_row(
-            {
-                "title": "El Gobierno envio una nueva reforma al Congreso",
-                "summary": "La medida abre debate politico durante la jornada.",
-                "media_type": "image",
-                "created_at": today.isoformat(),
-                "tags_json": '["tn","nacional"]',
-            }
-        )
+    def test_local_story_of_any_topic_is_valid(self) -> None:
+        # Deportes, cultura, religion o clima ya no se filtran por tema: decide la relevancia.
+        for title in ("Gimnasia y Tiro gano y suena con el ascenso", "Miles de fieles en la procesion del Milagro", "Alerta por tormentas fuertes en el Valle de Lerma"):
+            self.assertTrue(self.check(row(title=title)).accepted, title)
+
+    def test_politician_name_does_not_grant_entry_by_itself(self) -> None:
+        # Sin video, una nacional solo pasa a evaluarse con la exigencia de imagen (relevancia >= 70).
+        decision = self.check(row("tn", title="Milei hablo en un acto en Buenos Aires"))
+        self.assertTrue(decision.reason.startswith("valida; video=no; imagen_si_relevancia>=70"), decision.reason)
+
+    def test_paparazzi_requires_video_and_national_needs_high_relevance_without_it(self) -> None:
+        self.assertEqual(self.check(row("paparazzi")).reason, "sin_video")
+        for source in ("tn", "infobae"):
+            decision = self.check(row(source))
+            self.assertTrue(decision.accepted, source)
+            self.assertIn("imagen_si_relevancia>=70", decision.reason)
+        for source in ("tn", "infobae", "paparazzi"):
+            self.assertTrue(self.check(row(source, video=True)).accepted, source)
+
+    def without_trim(self) -> None:
+        self.policy.config = dataclasses.replace(self.policy.config, trim_long_videos=False)
+
+    def test_long_video_is_eligible_when_trimmed(self) -> None:
+        # Con media.trim_long_videos se publican sus primeros 90 s: el video largo cuenta como video.
+        self.assertTrue(self.policy.config.trim_long_videos)
+        long_video = json.dumps([{"kind": "video", "remote_url": "https://example.test/v.mp4", "duration_seconds": 224.0}])
+        for source in ("paparazzi", "tn"):
+            decision = self.check(row(source, assets_json=long_video))
+            self.assertTrue(decision.accepted, source)
+            self.assertEqual(decision.reason, "valida; video=si")
+
+    def test_long_national_video_falls_back_to_image_rule(self) -> None:
+        self.without_trim()
+        long_video = json.dumps([{"kind": "video", "remote_url": "https://example.test/v.mp4", "duration_seconds": 224.0}])
+        decision = self.check(row("tn", assets_json=long_video))
         self.assertTrue(decision.accepted)
+        self.assertIn("imagen_si_relevancia>=70", decision.reason)
 
-    def test_rejects_old_video_even_if_relevant(self) -> None:
-        settings = get_settings()
-        policy = ContentPolicy(settings)
-        old = datetime.now(ZoneInfo(settings.timezone)).replace(hour=10, minute=0, second=0, microsecond=0) - timedelta(days=1)
-        decision = policy.evaluate_row(
-            {
-                "title": "Video de un operativo policial con detenidos",
-                "summary": "La policia informo el allanamiento.",
-                "media_type": "video",
-                "created_at": old.isoformat(),
-                "tags_json": '["x"]',
-            }
-        )
+    def test_declared_video_over_90_seconds_is_not_eligible(self) -> None:
+        self.without_trim()
+        long_video = json.dumps([{"kind": "video", "remote_url": "https://example.test/v.mp4", "duration_seconds": 224.0}])
+        decision = self.check(row("paparazzi", assets_json=long_video))
         self.assertFalse(decision.accepted)
+        self.assertEqual(decision.reason, "video_mayor_90s")
+        short_video = json.dumps([{"kind": "video", "remote_url": "https://example.test/v.mp4", "duration_seconds": 85.0}])
+        self.assertTrue(self.check(row("paparazzi", assets_json=short_video)).accepted)
 
-    def test_accepts_old_video_when_same_day_rule_is_disabled(self) -> None:
-        with patch.dict(os.environ, {"DUO_PUBLISH_REQUIRE_SAME_LOCAL_DAY": "false"}, clear=False):
-            get_settings.cache_clear()
-            settings = get_settings()
-            policy = ContentPolicy(settings)
-            old = datetime.now(ZoneInfo(settings.timezone)).replace(hour=10, minute=0, second=0, microsecond=0) - timedelta(days=1)
-            decision = policy.evaluate_row(
-                {
-                    "title": "Video de un operativo policial con detenidos",
-                    "summary": "La policia informo el allanamiento.",
-                    "media_type": "video",
-                    "created_at": old.isoformat(),
-                    "tags_json": '["x"]',
-                }
-            )
-        self.assertTrue(decision.accepted)
-        self.assertIn("video_topic_bypass", decision.reason)
+    def test_local_sources_do_not_require_video(self) -> None:
+        for source in ("eltribuno", "informatesalta", "quepasasalta", "gobiernosalta", "policiasalta", "municipalidadsalta"):
+            self.assertTrue(self.check(row(source)).accepted, source)
 
-    def test_accepts_previous_day_x_video_when_x_same_day_rule_is_disabled(self) -> None:
-        settings = get_settings()
-        policy = ContentPolicy(settings)
-        old = datetime.now(ZoneInfo(settings.timezone)).replace(hour=10, minute=0, second=0, microsecond=0) - timedelta(days=1)
-        today = old + timedelta(days=1, hours=2)
-        decision = policy.evaluate_row(
-            {
-                "source": "x",
-                "source_type": "x_video",
-                "title": "Video de un operativo policial con detenidos",
-                "summary": "La policia informo el allanamiento.",
-                "media_type": "video",
-                "created_at": old.isoformat(),
-                "assigned_time": today.isoformat(),
-            }
-        )
-        self.assertTrue(decision.accepted)
-        self.assertIn("video_topic_bypass", decision.reason)
+    def test_removed_sources_are_rejected_even_if_already_in_database(self) -> None:
+        for source in ("nuevodiariodesalta", "fiscalespenalesalta", "justiciasalta", "noticiasargentinas", "minutouno", "elonce", "ambitofinanciero", "ariesonline", "eloncesalta"):
+            decision = self.check(row(source))
+            self.assertFalse(decision.accepted)
+            self.assertTrue(decision.reason.startswith("fuente_inactiva"), decision.reason)
 
-    def test_rejects_previous_day_x_video_when_x_same_day_rule_is_enabled(self) -> None:
-        with patch.dict(os.environ, {"DUO_X_REQUIRE_SAME_LOCAL_DAY": "true"}, clear=False):
-            get_settings.cache_clear()
-            settings = get_settings()
-            policy = ContentPolicy(settings)
-            old = datetime.now(ZoneInfo(settings.timezone)).replace(hour=10, minute=0, second=0, microsecond=0) - timedelta(days=1)
-            today = old + timedelta(days=1, hours=2)
-            decision = policy.evaluate_row(
-                {
-                    "source": "x",
-                    "source_type": "x_video",
-                    "title": "Video de un operativo policial con detenidos",
-                    "summary": "La policia informo el allanamiento.",
-                    "media_type": "video",
-                    "created_at": old.isoformat(),
-                    "assigned_time": today.isoformat(),
-                }
-            )
-        self.assertFalse(decision.accepted)
-        self.assertEqual(decision.reason, f"not_from_today:{old.date().isoformat()}")
+    def test_freshness_by_group(self) -> None:
+        self.assertTrue(self.check(row(hours_old=23)).accepted)
+        self.assertTrue(self.check(row(hours_old=25)).reason.startswith("fuera_de_vigencia"))
+        self.assertTrue(self.check(row("tn", video=True, hours_old=13)).reason.startswith("fuera_de_vigencia"))
+        self.assertTrue(self.check(row("paparazzi", video=True, hours_old=20)).accepted)
 
-    def test_accepts_x_manual_conflict_video_when_same_day_rule_is_disabled(self) -> None:
-        with patch.dict(os.environ, {"DUO_PUBLISH_REQUIRE_SAME_LOCAL_DAY": "false"}, clear=False):
-            get_settings.cache_clear()
-            settings = get_settings()
-            policy = ContentPolicy(settings)
-            old = datetime.now(ZoneInfo(settings.timezone)).replace(hour=10, minute=0, second=0, microsecond=0) - timedelta(days=1)
-            decision = policy.evaluate_row(
-                {
-                    "source": "x_manual",
-                    "source_type": "x_video",
-                    "title": "Pelea en la villa con códigos de honor únicos",
-                    "summary": "La pelea se volvió viral y abrió debate por los códigos de la calle.",
-                    "body_text": "Un clip viral mostró una pelea y reavivó el debate sobre violencia y conflicto social.",
-                    "media_type": "video",
-                    "created_at": old.isoformat(),
-                }
-            )
-        self.assertTrue(decision.accepted)
-        self.assertIn("video_topic_bypass", decision.reason)
+    def test_missing_date_is_rejected(self) -> None:
+        self.assertEqual(self.check(row(created_at="")).reason, "sin_fecha")
 
-    def test_accepts_generic_video_without_news_topic_match(self) -> None:
-        with patch.dict(os.environ, {"DUO_PUBLISH_REQUIRE_SAME_LOCAL_DAY": "false"}, clear=False):
-            get_settings.cache_clear()
-            settings = get_settings()
-            policy = ContentPolicy(settings)
-            today = datetime.now(ZoneInfo(settings.timezone)).replace(hour=10, minute=0, second=0, microsecond=0)
-            decision = policy.evaluate_row(
-                {
-                    "source": "x_manual",
-                    "source_type": "x_video",
-                    "title": "Huawei lanza laptop con función inesperada",
-                    "summary": "Un clip mostró una función nueva que sorprendió a todos.",
-                    "body_text": "El video se viralizó por una característica poco común y abrió debate entre usuarios.",
-                    "media_type": "video",
-                    "created_at": today.isoformat(),
-                }
-            )
-        self.assertTrue(decision.accepted)
-        self.assertIn("video_topic_bypass", decision.reason)
+    def test_non_article_pages_are_rejected(self) -> None:
+        for title in ("Acceso Full", "Edición impresa", "En vivo - Velez vs Gimnasia", "El horóscopo de hoy sábado 17"):
+            self.assertEqual(self.check(row(title=title)).reason, "no_es_nota", title)
 
-    def test_rejects_low_value_topic(self) -> None:
-        settings = get_settings()
-        policy = ContentPolicy(settings)
-        today = datetime.now(ZoneInfo(settings.timezone)).replace(hour=10, minute=0, second=0, microsecond=0)
-        decision = policy.evaluate_row(
-            {
-                "title": "La Liga: hora y formaciones del partido",
-                "summary": "Fixture deportivo con datos de equipos y horario.",
-                "media_type": "image",
-                "created_at": today.isoformat(),
-                "tags_json": '["tn","deportes"]',
-            }
-        )
-        self.assertFalse(decision.accepted)
+    def test_live_blog_is_rejected(self) -> None:
+        self.assertEqual(self.check(row("tn", video=True, raw_payload_json=json.dumps({"live_blog": True}))).reason, "vivo_minuto_a_minuto")
 
-    def test_rejects_subscription_landing_page(self) -> None:
-        settings = get_settings()
-        policy = ContentPolicy(settings)
-        today = datetime.now(ZoneInfo(settings.timezone)).replace(hour=10, minute=0, second=0, microsecond=0)
-        decision = policy.evaluate_row(
-            {
-                "source": "ambitofinanciero",
-                "title": "Acceso full - $1.800/MES",
-                "summary": "Contenido promocional de suscripcion digital sin informacion periodistica publicable.",
-                "body_text": "La pagina ofrece beneficios comerciales, acceso a contenidos y planes de pago para lectores.",
-                "media_type": "image",
-                "created_at": today.isoformat(),
-                "tags_json": '["ambitofinanciero","suscripcion"]',
-            }
-        )
-        self.assertFalse(decision.accepted)
-        self.assertEqual(decision.reason, "low_value_page")
+    def test_thin_content_is_rejected(self) -> None:
+        self.assertEqual(self.check(row(body_text="", summary="corto")).reason, "texto_insuficiente")
 
-    def test_rejects_partial_term_false_positive(self) -> None:
-        settings = get_settings()
-        policy = ContentPolicy(settings)
-        today = datetime.now(ZoneInfo(settings.timezone)).replace(hour=10, minute=0, second=0, microsecond=0)
-        decision = policy.evaluate_row(
-            {
-                "source": "ambitofinanciero",
-                "title": "Mercado inmobiliario",
-                "summary": "Un corredor historico conserva su valor patrimonial.",
-                "media_type": "image",
-                "created_at": today.isoformat(),
-                "tags_json": '["ambitofinanciero","economia"]',
-            }
-        )
-        self.assertFalse(decision.accepted)
-
-    def test_rejects_generic_section_page(self) -> None:
-        settings = get_settings()
-        policy = ContentPolicy(settings)
-        today = datetime.now(ZoneInfo(settings.timezone)).replace(hour=10, minute=0, second=0, microsecond=0)
-        decision = policy.evaluate_row(
-            {
-                "source": "infobae",
-                "title": "Policiales",
-                "summary": "Policiales, Crimen y Justicia",
-                "body_text": "",
-                "media_type": "image",
-                "created_at": today.isoformat(),
-                "tags_json": '["infobae","nacional"]',
-            }
-        )
-        self.assertFalse(decision.accepted)
-        self.assertEqual(decision.reason, "thin_content")
-
-    def test_rejects_disabled_source_already_in_database(self) -> None:
-        settings = get_settings()
-        policy = ContentPolicy(settings)
-        today = datetime.now(ZoneInfo(settings.timezone)).replace(hour=10, minute=0, second=0, microsecond=0)
-        decision = policy.evaluate_row(
-            {
-                "source": "ariesonline",
-                "title": "El Gobierno anuncio una medida",
-                "summary": "La decision se debate en el Congreso.",
-                "media_type": "image",
-                "created_at": today.isoformat(),
-                "tags_json": '["ariesonline"]',
-            }
-        )
-        self.assertFalse(decision.accepted)
-        self.assertIn("disabled_source", decision.reason)
-
-    def test_rejects_schedule_on_different_local_day(self) -> None:
-        settings = get_settings()
-        policy = ContentPolicy(settings)
-        today = datetime.now(ZoneInfo(settings.timezone)).replace(hour=10, minute=0, second=0, microsecond=0)
-        tomorrow = today + timedelta(days=1)
-        decision = policy.evaluate_row(
-            {
-                "source": "tn",
-                "title": "El Gobierno envio una nueva reforma al Congreso",
-                "summary": "La medida abre debate politico durante la jornada.",
-                "media_type": "image",
-                "created_at": today.isoformat(),
-                "assigned_time": tomorrow.isoformat(),
-                "tags_json": '["tn","nacional"]',
-            }
-        )
-        self.assertFalse(decision.accepted)
-        self.assertEqual(decision.reason, "scheduled_day_mismatch")
-
-    def test_accepts_public_safety_alert(self) -> None:
-        settings = get_settings()
-        policy = ContentPolicy(settings)
-        today = datetime.now(ZoneInfo(settings.timezone)).replace(hour=10, minute=0, second=0, microsecond=0)
-        decision = policy.evaluate_row(
-            {
-                "source": "x_manual",
-                "source_type": "x_video",
-                "title": "Fernet Branca adulterado invade el Conurbano",
-                "summary": "Alerta por una bebida adulterada que pone en riesgo la salud.",
-                "body_text": "Vecinos denunciaron la venta de botellas falsificadas y exigieron controles.",
-                "media_type": "video",
-                "created_at": today.isoformat(),
-            }
-        )
-        self.assertTrue(decision.accepted)
-        self.assertIn("video_topic_bypass", decision.reason)
+    def test_x_feed_video_needs_video_but_little_text(self) -> None:
+        self.assertTrue(self.check(row("x", video=True, body_text="", summary="Choque en la ruta")).accepted)
+        self.assertEqual(self.check(row("x", body_text="", summary="Choque")).reason, "sin_video")
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AgencyRoundupTests(unittest.TestCase):
+    def test_date_stamp_titles_are_not_articles(self) -> None:
+        from jobs.content_policy import ContentPolicy
+
+        self.assertTrue(ContentPolicy._is_non_article({"title": "Domingo, 18 de octubre de 2026 (12:00 GMT)"}))
+        self.assertFalse(ContentPolicy._is_non_article({"title": "El domingo 18 de octubre habrá cortes de agua en Salta"}))

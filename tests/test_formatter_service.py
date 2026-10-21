@@ -43,6 +43,7 @@ class FormatterServiceTests(unittest.TestCase):
                             }
                         ]
                     ),
+                    "media_json": json.dumps({"video": {"path": str(tmp_path / "source.mp4"), "duration_seconds": 12.0, "kind": "mp4"}}),
                 }
                 def fake_process_video(*args: object, **kwargs: object) -> str:
                     output = tmp_path / "out.mp4"
@@ -105,7 +106,7 @@ class FormatterServiceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="duo_formatter_") as tmp_dir:
             tmp_path = Path(tmp_dir)
             source_path = tmp_path / "source.jpg"
-            Image.new("RGB", (1200, 800), (80, 80, 120)).save(source_path)
+            Image.fromarray((__import__("numpy").random.default_rng(1).random((800, 1200, 3)) * 255).astype("uint8")).save(source_path)
 
             with patch.dict(
                 os.environ,
@@ -150,7 +151,7 @@ class FormatterServiceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="duo_formatter_") as tmp_dir:
             tmp_path = Path(tmp_dir)
             source_path = tmp_path / "source.jpg"
-            Image.new("RGB", (1200, 800), (80, 80, 120)).save(source_path)
+            Image.fromarray((__import__("numpy").random.default_rng(2).random((800, 1200, 3)) * 255).astype("uint8")).save(source_path)
 
             with patch.dict(
                 os.environ,
@@ -191,7 +192,7 @@ class FormatterServiceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="duo_formatter_") as tmp_dir:
             tmp_path = Path(tmp_dir)
             source_path = tmp_path / "source.jpg"
-            Image.new("RGB", (1200, 800), (80, 80, 120)).save(source_path)
+            Image.fromarray((__import__("numpy").random.default_rng(3).random((800, 1200, 3)) * 255).astype("uint8")).save(source_path)
 
             with patch.dict(
                 os.environ,
@@ -234,7 +235,7 @@ class FormatterServiceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="duo_premium_card_") as tmp_dir:
             tmp_path = Path(tmp_dir)
             source_path = tmp_path / "source.jpg"
-            Image.new("RGB", (1400, 780), (60, 90, 130)).save(source_path)
+            Image.fromarray((__import__("numpy").random.default_rng(4).random((780, 1400, 3)) * 255).astype("uint8")).save(source_path)
             output = normalize_for_instagram_premium_v2_card(
                 str(source_path),
                 output_filename="premium_v2.jpg",

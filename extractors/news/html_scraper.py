@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import random
 import re
 import time
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urljoin, urlparse, urlunparse
 
 import feedparser
@@ -17,6 +18,10 @@ from bs4 import BeautifulSoup
 from extractors.news.common import content_from_raw, normalize_url, strip_html
 from storage.models import ExtractedContent
 from storage.settings import PipelineSettings, get_settings
+from utils.tls import ca_bundle_for
+
+# Predicado "esta URL ya se proceso": evita bajar de nuevo el detalle de notas conocidas.
+KnownUrl = Callable[[str], bool]
 
 
 _USER_AGENTS = [
@@ -61,15 +66,17 @@ def clean_text(text: Optional[str]) -> str:
     if not text:
         return ""
     value = re.sub(r"\s+", " ", str(text)).strip()
-    with contextlib.suppress(Exception):
-        if any(tok in value for tok in ("Ãƒ", "Ã‚", "Ã¢")):
+    # UTF-8 leido como latin-1 ("OrtÃ­z"): algunos CMS lo publican asi en el JSON-LD.
+    if re.search("[ÂÃ][\u0080-¿]", value):
+        with contextlib.suppress(Exception):
             value = value.encode("latin1").decode("utf-8")
     return value.strip()
 
 
 def is_valid_image_url(url: str) -> bool:
-    low = url.lower()
-    return not any(tok in low for tok in _IMAGE_EXCLUDE)
+    # Palabras enteras de la ruta: "ads" no tiene que descartar "/wp-content/uploads/".
+    words = set(re.split(r"[^a-z0-9]+", urlparse(url.lower()).path))
+    return not words.intersection(_IMAGE_EXCLUDE)
 
 
 def extract_json_ld(soup: BeautifulSoup) -> Dict:
@@ -162,10 +169,26 @@ def fetch_html(url: str, referer: str = "", timeout: int = 20, retries: int = 2)
     headers = default_headers(referer)
     for attempt in range(1, retries + 1):
         try:
-            r = requests.get(url, headers=headers, timeout=timeout)
+            r = requests.get(url, headers=headers, timeout=timeout, verify=ca_bundle_for(url))
             if r.ok and r.text:
+                if not r.encoding or r.encoding.lower() == "iso-8859-1":
+                    r.encoding = r.apparent_encoding or "utf-8"
                 return r.text
         except requests.RequestException:
+            pass
+        if attempt < retries:
+            time.sleep(1.5 * attempt + random.uniform(0, 0.5))
+    return None
+
+
+def fetch_json(url: str, referer: str = "", timeout: int = 20, retries: int = 2) -> Any:
+    headers = {**default_headers(referer), "Accept": "application/json"}
+    for attempt in range(1, retries + 1):
+        try:
+            r = requests.get(url, headers=headers, timeout=timeout, verify=ca_bundle_for(url))
+            if r.ok:
+                return r.json()
+        except (requests.RequestException, ValueError):
             pass
         if attempt < retries:
             time.sleep(1.5 * attempt + random.uniform(0, 0.5))
@@ -216,19 +239,27 @@ class HtmlNewsExtractor:
     def __init__(self, settings: Optional[PipelineSettings] = None) -> None:
         self.settings = settings or get_settings()
 
-    def scan(self, max_items: int = 10) -> List[ExtractedContent]:
+    def scan(self, max_items: int = 10, known: Optional[KnownUrl] = None) -> List[ExtractedContent]:
         limit = max(1, max_items)
         candidates = self._rss_candidates(limit)
         if not candidates:
             candidates = self._homepage_candidates(limit)
+        logger = logging.getLogger(f"duo.extractors.{self.source}")
         results: List[ExtractedContent] = []
         for item in candidates[:limit]:
             url = str(item.get("url") or "").strip()
             if not url:
                 continue
-            with contextlib.suppress(Exception):
+            if known is not None and known(url):
+                continue  # deduplicacion economica: sin bajar el detalle otra vez
+            try:
                 detail = self._article_detail(url, title_hint=str(item.get("titulo") or ""))
-                item.update(detail)
+            except Exception as exc:
+                logger.warning("%s detalle fallido %s: %s", self.source, url, exc)
+                continue
+            if not detail:
+                continue
+            item.update(detail)
             results.append(
                 content_from_raw(
                     source=self.source,
@@ -244,7 +275,10 @@ class HtmlNewsExtractor:
         seen: set = set()
         for feed_url in self.rss_feeds:
             try:
-                parsed = feedparser.parse(str(feed_url))
+                response = requests.get(str(feed_url), headers=default_headers(self.base_url), timeout=20, verify=ca_bundle_for(str(feed_url)))
+                if not response.ok:
+                    continue
+                parsed = feedparser.parse(response.content)
                 for entry in parsed.entries or []:
                     url = normalize_article_url(str(getattr(entry, "link", "") or ""), self.base_url)
                     if not url or url in seen or not self._is_article_url(url):

@@ -1,0 +1,44 @@
+# Etiquetas de Instagram (user_tags) en los posts de DUO.
+#
+# Quien se etiqueta:
+# - Cuentas de esta lista cuando la nota nombra a la persona o institucion (por alias).
+# - Cuentas que propone la redaccion IA (personas publicas e instituciones protagonistas),
+#   solo si la API de Instagram (business_discovery) confirma que la cuenta existe, que su
+#   nombre coincide con el de la nota y que supera el minimo de seguidores.
+# Nunca: particulares, victimas, menores, detenidos o acusados; ni personas en notas
+# policiales o judiciales (ahi solo instituciones).
+# Cuentas verificadas con business_discovery el 2026-10-18.
+
+enabled: true
+max_tags: 3
+min_followers:
+  persona_publica: 20000
+  institucion: 5000
+# En estas categorias solo se etiquetan instituciones.
+institution_only_categories: [policiales, justicia]
+
+accounts:
+  - handle: policiadesalta
+    kind: institucion
+    aliases: ["Policia de Salta", "Policia de la Provincia de Salta"]
+  - handle: gobiernosalta
+    kind: institucion
+    aliases: ["Gobierno de Salta", "Gobierno provincial", "Gobierno de la Provincia de Salta"]
+  - handle: municipalidadsalta
+    kind: institucion
+    aliases: ["Municipalidad de Salta", "Municipalidad de la Ciudad de Salta", "Municipio capitalino"]
+  - handle: gustavosaenzok
+    kind: persona_publica
+    aliases: ["Gustavo Saenz"]
+  - handle: ansesgob
+    kind: institucion
+    aliases: ["ANSES", "Administracion Nacional de la Seguridad Social"]
+  - handle: javiermilei
+    kind: persona_publica
+    aliases: ["Javier Milei"]
+  - handle: hospitalsanbernardo
+    kind: institucion
+    aliases: ["Hospital San Bernardo"]
+  - handle: culturasalta
+    kind: institucion
+    aliases: ["Secretaria de Cultura de Salta"]

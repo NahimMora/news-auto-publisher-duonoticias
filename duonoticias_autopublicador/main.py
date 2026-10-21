@@ -11,6 +11,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from .config import Settings
 from .duo_client import DuoClient
 from .hs_client import HolaSaltaClient
@@ -98,6 +100,20 @@ class AutoPublisher:
         temporary.replace(path)
 
 
+def describe_validation_error(exc: ValidationError) -> str:
+    """Field names and error types only: pydantic's message includes input values (secrets)."""
+    problems = []
+    for error in exc.errors():
+        field = ".".join(str(part) for part in error.get("loc", ())) or "?"
+        problems.append(f"{field} ({error.get('type', 'invalid')})")
+    return "campos faltantes o invalidos: " + ", ".join(problems)
+
+
+def dry_run_state_path(path: Path) -> Path:
+    """Dry runs keep their own outbox so their items are never sent by a later live run."""
+    return path.with_name(f"{path.stem}.dry-run{path.suffix}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Autopublicador de DuoNoticias")
     modes = parser.add_mutually_exclusive_group()
@@ -115,6 +131,9 @@ def cli(argv: list[str] | None = None) -> int:
         settings = Settings.load(args.env_file)
         effective_dry_run = bool(args.dry_run or settings.dry_run)
         settings.assert_safe_machine(effective_dry_run=effective_dry_run or args.verify)
+    except ValidationError as exc:
+        logger.error(f"configuration_error: {describe_validation_error(exc)}")
+        return 2
     except Exception as exc:
         logger.error(f"configuration_error: {exc}")
         return 2
@@ -123,7 +142,10 @@ def cli(argv: list[str] | None = None) -> int:
         print(json.dumps(StateStore.read_counts(settings.state_db_path), ensure_ascii=False, sort_keys=True))
         return 0
 
-    store = StateStore(settings.state_db_path)
+    state_db_path = dry_run_state_path(settings.state_db_path) if effective_dry_run else settings.state_db_path
+    if effective_dry_run:
+        logger.info(f"dry_run_uses_separate_state_db path={state_db_path}")
+    store = StateStore(state_db_path)
     hs = HolaSaltaClient(
         settings.hs_api_url,
         settings.hs_api_username,

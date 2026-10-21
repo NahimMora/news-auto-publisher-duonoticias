@@ -30,16 +30,15 @@ pytest
 
 El modo que puede enviar esta bloqueado por codigo salvo que `COMPUTERNAME=FERNANDO`. No se exponen puertos. El servidor de `tools/mock_duo_server.py` es solo para desarrollo y rechaza escuchar fuera de loopback.
 
-## Tarea programada de Windows (solo documentacion)
+## Motor audiovisual
 
-En la PC FERNANDO, cree manualmente una tarea en Task Scheduler que se ejecute al iniciar sesion o al arrancar el equipo, con un usuario que tenga acceso al proyecto:
+Todas las piezas que publica el pipeline (posts, carruseles y reels) salen del motor **Dúo Motion** (`motion/`: Remotion + panel Next.js). Instalación, plantillas, branding y exportación: [motion/README.md](motion/README.md).
 
-- Programa: `C:\DuoNoticias\AutoPublicador_DuoNoticias\.venv\Scripts\python.exe`
-- Argumentos: `-m duonoticias_autopublicador.main`
-- Iniciar en: `C:\DuoNoticias\AutoPublicador_DuoNoticias`
-- Activar reinicio ante fallo y evitar instancias paralelas.
+## Servicio 24/7
 
-No se instala ninguna tarea desde este repositorio. El contrato propuesto para la web Node esta en [docs/INGEST_CONTRACT.md](docs/INGEST_CONTRACT.md).
+El servicio de produccion es el pipeline, no este puente: tarea `DuoNoticias-24x7` registrada con `scripts\register_scheduled_task.ps1`, que corre `scripts\start_24x7_production.ps1` (preflight + `run-24-7 --live`). Ver [docs/OPERATIONS.md](docs/OPERATIONS.md). No registrar una tarea para el puente standalone: duplicaria envios a la web. El contrato propuesto para la web Node esta en [docs/INGEST_CONTRACT.md](docs/INGEST_CONTRACT.md).
+
+`--dry-run` usa su propia base (`state/state.dry-run.db`), asi que lo procesado en una prueba nunca se envia despues en modo real.
 
 Los items de HolaSalta se tratan como diccionarios opacos; el codigo solo usa los campos confirmados en el contrato. Para observar campos adicionales en la practica, revise `raw_json` en la base sin registrar credenciales ni tokens.
 

@@ -1,69 +1,47 @@
 from __future__ import annotations
 
 import unittest
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 from cli import main as cli_main
 
+ZONE = ZoneInfo("America/Buenos_Aires")
+
 
 class DummyPipeline:
-    def __init__(self, *, active_slot: str | None = None) -> None:
-        self.settings = SimpleNamespace(
-            schedule_slots=("09:00", "12:00", "15:00", "18:00", "21:00"),
-            timezone="America/Buenos_Aires",
-        )
-        self._slot = active_slot
+    def __init__(self, align_minute: int = 0) -> None:
+        self.settings = SimpleNamespace(timezone="America/Buenos_Aires")
+        self.config = SimpleNamespace(align_minute=align_minute)
 
-    def _active_schedule_slot(self) -> str | None:
-        return self._slot
+
+class FrozenDatetime(datetime):
+    frozen = datetime(2026, 10, 17, 14, 20, 0, tzinfo=ZONE)
+
+    @classmethod
+    def now(cls, tz=None):
+        return cls.frozen.astimezone(tz) if tz else cls.frozen
 
 
 class CliLoopTimingTests(unittest.TestCase):
-    def test_initial_cycle_waits_for_next_slot_in_live_mode(self) -> None:
-        pipeline = DummyPipeline(active_slot=None)
-        with patch("cli.main._seconds_until_next_slot", return_value=7200):
-            self.assertEqual(
-                cli_main._seconds_until_initial_cycle(
-                    pipeline,
-                    3600,
-                    align_to_slots=True,
-                ),
-                7200,
-            )
+    def test_next_cycle_is_next_top_of_the_hour(self) -> None:
+        with patch.object(cli_main, "datetime", FrozenDatetime):
+            wait = cli_main._seconds_until_next_cycle(DummyPipeline())
+        self.assertAlmostEqual(wait, 40 * 60 + 5, delta=1)
 
-    def test_initial_cycle_starts_immediately_when_slot_is_active(self) -> None:
-        pipeline = DummyPipeline(active_slot="09:00")
-        with patch("cli.main._seconds_until_next_slot", return_value=7200):
-            self.assertEqual(
-                cli_main._seconds_until_initial_cycle(
-                    pipeline,
-                    3600,
-                    align_to_slots=True,
-                ),
-                0.0,
-            )
+    def test_next_cycle_respects_configured_minute(self) -> None:
+        with patch.object(cli_main, "datetime", FrozenDatetime):
+            wait = cli_main._seconds_until_next_cycle(DummyPipeline(align_minute=30))
+        self.assertAlmostEqual(wait, 10 * 60 + 5, delta=1)
 
-    def test_next_cycle_follows_slot_in_live_mode(self) -> None:
-        pipeline = DummyPipeline(active_slot=None)
-        with patch("cli.main._seconds_until_next_slot", return_value=7200):
-            self.assertEqual(
-                cli_main._seconds_until_next_cycle(
-                    pipeline,
-                    3600,
-                    align_to_slots=True,
-                ),
-                7200,
-            )
+    def test_cycle_id_is_hourly_and_local(self) -> None:
+        from jobs.pipeline import cycle_id_for
 
-    def test_next_cycle_uses_interval_outside_live_mode(self) -> None:
-        pipeline = DummyPipeline(active_slot=None)
-        with patch("cli.main._seconds_until_next_slot", return_value=7200):
-            self.assertEqual(
-                cli_main._seconds_until_next_cycle(
-                    pipeline,
-                    3600,
-                    align_to_slots=False,
-                ),
-                3600,
-            )
+        self.assertEqual(cycle_id_for(datetime(2026, 10, 17, 17, 59, tzinfo=ZoneInfo("UTC")), ZONE), "2026-10-17T14")
+        self.assertEqual(cycle_id_for(datetime(2026, 10, 17, 18, 0, tzinfo=ZoneInfo("UTC")), ZONE), "2026-10-17T15")
+
+
+if __name__ == "__main__":
+    unittest.main()

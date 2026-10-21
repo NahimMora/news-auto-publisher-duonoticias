@@ -139,12 +139,17 @@ def _r2_client(cfg: MediaStorageConfig):
     except ImportError as exc:
         raise RuntimeError("Falta boto3 para subir a R2. Ejecute: pip install -r requirements.txt") from exc
 
+    from botocore.config import Config
+
     return boto3.client(
         "s3",
         endpoint_url=cfg.r2_endpoint_url,
         aws_access_key_id=cfg.r2_access_key_id,
         aws_secret_access_key=cfg.r2_secret_access_key,
         region_name=cfg.r2_region,
+        # 2026-10-21: R2 devolvio InternalError en dos subidas seguidas y el ciclo no publico nada.
+        # El modo standard reintenta InternalError/5xx/throttling con espera exponencial.
+        config=Config(retries={"max_attempts": 6, "mode": "standard"}, connect_timeout=15, read_timeout=120),
     )
 
 

@@ -66,3 +66,12 @@ class NewsCommonTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_is_valid_image_url_keeps_wordpress_uploads():
+    from extractors.news.html_scraper import is_valid_image_url
+
+    assert is_valid_image_url("https://nuevodiariodesalta.com.ar/wp-content/uploads/2026/10/854043206_n.jpg")
+    assert not is_valid_image_url("https://example.com/static/logo-duo.png")
+    assert not is_valid_image_url("https://example.com/ads/banner_300x250.jpg")
+    assert not is_valid_image_url("https://example.com/img/favicon.ico")

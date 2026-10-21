@@ -18,10 +18,11 @@ from storage.models import (
     safe_json,
     utc_now_iso,
 )
+from storage.editorial_store import EditorialStoreMixin
 from storage.settings import PipelineSettings, get_settings
 
 
-class PipelineStore:
+class PipelineStore(EditorialStoreMixin):
     TRACEABILITY_MIGRATION = "2026_05_02_traceability_runtime"
 
     def __init__(self, settings: PipelineSettings | None = None) -> None:
@@ -400,6 +401,7 @@ class PipelineStore:
             ON analytics_snapshots(publication_id, checkpoint_label)
             """
         )
+        self._migrate_editorial_schema()
 
     def _backfill_materialized_fields(self) -> None:
         with self.connection() as conn:
@@ -692,8 +694,8 @@ class PipelineStore:
             (limit,),
         )
 
-    def save_editorial(self, content_key: str, editorial: EditorialPackage) -> None:
-        status = "editorialized" if editorial.publish else "filtered"
+    def save_editorial(self, content_key: str, editorial: EditorialPackage, *, status: str | None = None) -> None:
+        status = status or ("editorialized" if editorial.publish else "discarded")
         payload = editorial.as_dict()
         with self.connection() as conn:
             conn.execute(
@@ -710,6 +712,7 @@ class PipelineStore:
                     editorial_signature = ?,
                     final_caption = ?,
                     final_overlay = ?,
+                    editorial_cache_key = ?,
                     pipeline_status = ?,
                     updated_at = ?
                 WHERE content_key = ?
@@ -726,6 +729,7 @@ class PipelineStore:
                     editorial.pattern_signature,
                     editorial.caption,
                     editorial.overlay,
+                    str((editorial.input_payload or {}).get("cache_key") or ""),
                     status,
                     utc_now_iso(),
                     content_key,
@@ -813,6 +817,24 @@ class PipelineStore:
             LIMIT ?
             """,
             (now_iso, limit),
+        )
+
+    def schedule_context_since(self, since_iso: str, limit: int = 500) -> List[Dict[str, Any]]:
+        """Agendado, en curso o publicado desde ``since_iso``: lo que ocupa franjas y cupo diario."""
+        return self._rows(
+            """
+            SELECT content_key, title, source, source_handle, media_type, assigned_post_type,
+                   json_extract(formatted_json, '$.post_type') AS formatted_post_type,
+                   score_theme, assigned_slot, assigned_time, schedule_json, pipeline_status
+            FROM content_items
+            WHERE schedule_json IS NOT NULL
+              AND formatted_json IS NOT NULL
+              AND pipeline_status IN ('scheduled', 'publish_failed', 'publishing', 'published')
+              AND json_extract(schedule_json, '$.scheduled_for') >= ?
+            ORDER BY json_extract(schedule_json, '$.scheduled_for') ASC
+            LIMIT ?
+            """,
+            (since_iso, limit),
         )
 
     def save_schedule(self, content_key: str, schedule: ScheduleDecision) -> None:
@@ -1038,6 +1060,80 @@ class PipelineStore:
                 ),
             )
             return int(row["id"]) if row else 0
+
+    # -- idempotencia de publicacion ------------------------------------
+    # Antes de llamar a Meta la plataforma queda "in_flight". Si el proceso cae
+    # entre la publicacion real y el guardado, el siguiente ciclo NO reintenta:
+    # reconcilia por evidencia (caption exacto en la cuenta) o marca "ambiguous".
+
+    def mark_publication_in_flight(self, content_key: str, platform: str, caption: str, post_type: str) -> None:
+        now = utc_now_iso()
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO publications (content_key, platform, status, caption, post_type, mode, dry_run, created_at, updated_at)
+                VALUES (?, ?, 'in_flight', ?, ?, 'live', 0, ?, ?)
+                ON CONFLICT(content_key, platform) DO UPDATE SET
+                    status = CASE WHEN publications.status = 'published' THEN publications.status ELSE 'in_flight' END,
+                    caption = excluded.caption,
+                    post_type = excluded.post_type,
+                    updated_at = excluded.updated_at
+                """,
+                (content_key, platform, caption, post_type, now, now),
+            )
+
+    def list_in_flight_publications(self) -> List[Dict[str, Any]]:
+        return self._rows(
+            """
+            SELECT id, content_key, platform, caption, post_type, updated_at
+            FROM publications
+            WHERE status = 'in_flight'
+            ORDER BY updated_at ASC
+            """,
+            (),
+        )
+
+    def resolve_publication(
+        self,
+        content_key: str,
+        platform: str,
+        *,
+        status: str,
+        media_id: str = "",
+        permalink: str = "",
+        error_message: str = "",
+    ) -> None:
+        now = utc_now_iso()
+        with self.connection() as conn:
+            conn.execute(
+                """
+                UPDATE publications
+                SET status = ?,
+                    platform_media_id = COALESCE(NULLIF(?, ''), platform_media_id),
+                    platform_post_id = COALESCE(NULLIF(?, ''), platform_post_id),
+                    permalink = COALESCE(NULLIF(?, ''), permalink),
+                    published_at = CASE WHEN ? = 'published' THEN COALESCE(published_at, ?) ELSE published_at END,
+                    error_message = ?,
+                    updated_at = ?
+                WHERE content_key = ? AND platform = ?
+                """,
+                (status, media_id, media_id, permalink, status, now, error_message, now, content_key, platform),
+            )
+
+    def defer_publish(self, content_key: str, reason: str) -> None:
+        """Vuelve a la cola sin consumir reintentos (limite de tasa de la plataforma)."""
+        with self.connection() as conn:
+            conn.execute(
+                """
+                UPDATE content_items
+                SET pipeline_status = 'scheduled',
+                    last_error = ?,
+                    errors = ?,
+                    updated_at = ?
+                WHERE content_key = ? AND pipeline_status != 'published'
+                """,
+                (reason, reason, utc_now_iso(), content_key),
+            )
 
     def publication_statuses(self, content_key: str) -> Dict[str, Dict[str, Any]]:
         rows = self._rows(
@@ -1873,6 +1969,13 @@ class PipelineStore:
         row = self.find_content(content_key)
         if not row:
             return False
+        # Un reintento manual habilita de nuevo las plataformas ambiguas/en vuelo
+        # (el operador ya verifico en Meta que no se publicaron).
+        with self.connection() as conn:
+            conn.execute(
+                "UPDATE publications SET status = 'failed', updated_at = ? WHERE content_key = ? AND status IN ('ambiguous', 'in_flight')",
+                (utc_now_iso(), content_key),
+            )
         reset_score = str(row.get("pipeline_status") or "") in {"filtered", "score_failed"}
         if reset_score:
             target = "extracted"

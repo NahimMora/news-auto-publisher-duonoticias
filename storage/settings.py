@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 from dotenv import load_dotenv
 
 from storage.config_loader import load_yaml_config
+from utils.llm_client import LLMConfig, llm_config_from_env
 from utils.machine_guard import is_production_machine
 
 
@@ -140,11 +141,9 @@ class PipelineSettings:
     score_validation_deviation_threshold: float
     source_ranking_lookback_days: int
     editorial_master_prompt_path: Path | None
-    openai_api_key: str
-    openai_model: str
-    openai_base_url: str
-    openai_temperature: float
-    openai_max_output_tokens: int
+    llm: LLMConfig
+    llm_temperature: float
+    llm_max_output_tokens: int
     ig_graph_version: str
     ig_access_token: str
     ig_user_id: str
@@ -181,10 +180,17 @@ class PipelineSettings:
     editorial_policy: dict
     webapp_holasalta_path: Path | None
     debug: bool
-    # HolaSalta source (read-only API: login + GET)
-    hs_api_url: str = "http://127.0.0.1:8000"
-    hs_api_username: str = "admin"
-    hs_api_password: str = field(default="", repr=False)
+    # Cupo diario real (0 = sin tope). Los carruseles cuentan como posts.
+    daily_max_posts: int = 0
+    daily_max_reels: int = 0
+    # Cupo por franja: (franja, reels, posts). Las franjas sin entrada usan *_per_slot.
+    schedule_slot_quotas: Tuple[Tuple[str, int, int], ...] = ()
+    # Links de videos de X que recolecta HolaSalta (archivo de intercambio, solo lectura).
+    x_video_feed_enabled: bool = True
+    x_video_feed_path: Path = Path(r"C:\sources\x_video_sources.json")
+    x_video_feed_state_path: Path | None = None
+    x_video_feed_max_age_hours: float = 24.0
+    x_video_feed_max_per_cycle: int = 8
     # Duo web delivery: "disabled" | "ingest" (docs/INGEST_CONTRACT.md) | "admin" (DUO_API.md)
     enable_duo_web: bool = False
     duo_web_mode: str = "disabled"
@@ -192,6 +198,29 @@ class PipelineSettings:
     duo_web_token: str = field(default="", repr=False)
     duo_web_default_category: str = "world"
     production_machine: bool = False
+    # Ciclo horario, cupos, cola, relevancia y tarifas (config/editorial_scoring.yaml).
+    editorial_scoring_path: Path | None = None
+    editorial_scoring: dict = field(default_factory=dict)
+    # Preparacion de articulos para la futura web (no publica nada; ver publishers/web_prep.py).
+    web_prepare_articles: bool = True
+
+
+def _slot_quotas(thresholds_config: dict) -> Tuple[Tuple[str, int, int], ...]:
+    """Plan de franjas: DUO_SLOT_QUOTAS="08:30=0+1,11:00=1+1" (reels+posts) o slot_quotas en thresholds.yaml."""
+    plan: dict = {}
+    raw = os.getenv("DUO_SLOT_QUOTAS", "").strip()
+    if raw:
+        for part in raw.split(","):
+            label, _, counts = part.strip().partition("=")
+            reels, _, posts = counts.partition("+")
+            if label.strip() and reels.strip().isdigit() and posts.strip().isdigit():
+                plan[label.strip()] = (int(reels), int(posts))
+    else:
+        configured = thresholds_config.get("slot_quotas") if isinstance(thresholds_config, dict) else None
+        for label, counts in (configured.items() if isinstance(configured, dict) else []):
+            if isinstance(counts, dict):
+                plan[str(label)] = (int(counts.get("reels") or 0), int(counts.get("posts") or 0))
+    return tuple((label, reels, posts) for label, (reels, posts) in sorted(plan.items()))
 
 
 @lru_cache(maxsize=1)
@@ -204,14 +233,16 @@ def get_settings() -> PipelineSettings:
     sources_config = load_yaml_config(sources_config_path)
     thresholds_config = load_yaml_config(thresholds_config_path)
     editorial_policy = load_yaml_config(editorial_policy_path)
+    editorial_scoring_path = Path(os.getenv("DUO_EDITORIAL_SCORING_CONFIG", str(config_dir / "editorial_scoring.yaml")))
+    editorial_scoring = load_yaml_config(editorial_scoring_path)
     configured_slots = thresholds_config.get("scheduler_slots") if isinstance(thresholds_config, dict) else None
+    slot_quotas = _slot_quotas(thresholds_config)
+    if slot_quotas:
+        configured_slots = [label for label, _, _ in slot_quotas]
     default_slots = ",".join(configured_slots) if isinstance(configured_slots, list) else "09:00,12:00,15:00,18:00,21:00"
     schedule_slots = tuple(
         slot.strip()
-        for slot in os.getenv(
-            "DUO_SCHEDULE_SLOTS",
-            default_slots,
-        ).split(",")
+        for slot in (os.getenv("DUO_SCHEDULE_SLOTS", "").strip() or default_slots).split(",")
         if slot.strip()
     )
     quotas = thresholds_config.get("quotas") if isinstance(thresholds_config, dict) else {}
@@ -228,19 +259,8 @@ def get_settings() -> PipelineSettings:
     editorial_prompt = os.getenv("DUO_EDITORIAL_MASTER_PROMPT_PATH", "").strip()
     configured_x_sources = _configured_x_sources(sources_config)
     env_x_sources = os.getenv("X_SOURCES", "").strip()
-    raw_x_sources = (
-        env_x_sources.split(",")
-        if env_x_sources
-        else configured_x_sources
-        or (
-            "UnPocoTende",
-            "Trumperizar",
-            "TTendenciaX",
-            "therealbuni",
-            "Tv_Libertaria",
-            "porqueTTarg",
-        )
-    )
+    # Sin cuentas por defecto: el scraping autonomo de cuentas de X se retiro (2026-10).
+    raw_x_sources = env_x_sources.split(",") if env_x_sources else configured_x_sources
     x_sources = tuple(
         normalized
         for source in raw_x_sources
@@ -300,11 +320,10 @@ def get_settings() -> PipelineSettings:
         ),
         source_ranking_lookback_days=_get_int("DUO_SOURCE_RANKING_LOOKBACK_DAYS", 30),
         editorial_master_prompt_path=Path(editorial_prompt) if editorial_prompt else None,
-        openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),
-        openai_model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini").strip(),
-        openai_base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1/responses").strip(),
-        openai_temperature=_get_float("OPENAI_TEMPERATURE", 0.7),
-        openai_max_output_tokens=_get_int("OPENAI_MAX_OUTPUT_TOKENS", 900),
+        llm=llm_config_from_env(),
+        llm_temperature=_get_float("LLM_TEMPERATURE", _get_float("OPENAI_TEMPERATURE", 0.7)),
+        # Editorial JSON (caption up to 1500 chars + slides); headroom for Gemini thinking tokens.
+        llm_max_output_tokens=_get_int("LLM_MAX_OUTPUT_TOKENS", 2048),
         ig_graph_version=os.getenv("IG_GRAPH_VERSION", "v25.0").strip(),
         ig_access_token=(os.getenv("META_ACCESS_TOKEN") or os.getenv("IG_ACCESS_TOKEN", "")).strip(),
         ig_user_id=(os.getenv("META_IG_USER_ID") or os.getenv("IG_USER_ID", "")).strip(),
@@ -363,13 +382,23 @@ def get_settings() -> PipelineSettings:
         editorial_policy=editorial_policy,
         webapp_holasalta_path=Path(os.getenv("WEBAPP_HOLASALTA_PATH")) if os.getenv("WEBAPP_HOLASALTA_PATH") else None,
         debug=_get_bool("DUO_DEBUG", False),
-        hs_api_url=(os.getenv("HS_API_URL") or "http://127.0.0.1:8000").strip().rstrip("/"),
-        hs_api_username=(os.getenv("HS_API_USERNAME") or "admin").strip(),
-        hs_api_password=os.getenv("HS_API_PASSWORD", "").strip(),
+        daily_max_posts=max(0, _get_int("DUO_DAILY_MAX_POSTS", int(quotas.get("max_posts_per_day") or 0))),
+        daily_max_reels=max(0, _get_int("DUO_DAILY_MAX_REELS", int(quotas.get("max_reels_per_day") or 0))),
+        schedule_slot_quotas=slot_quotas,
+        x_video_feed_enabled=_get_bool("X_VIDEO_FEED_ENABLED", True),
+        x_video_feed_path=Path(os.getenv("X_VIDEO_FEED_PATH") or r"C:\sources\x_video_sources.json"),
+        x_video_feed_state_path=Path(
+            os.getenv("X_VIDEO_FEED_STATE_PATH") or str(data_dir / "runtime" / "x_video_feed_state.json")
+        ),
+        x_video_feed_max_age_hours=_get_float("X_VIDEO_FEED_MAX_AGE_HOURS", 24.0),
+        x_video_feed_max_per_cycle=max(0, _get_int("X_VIDEO_FEED_MAX_PER_CYCLE", 8)),
         enable_duo_web=_get_bool("ENABLE_DUO_WEB", False),
         duo_web_mode=duo_web_mode,
         duo_web_url=duo_web_url.strip().rstrip("/"),
         duo_web_token=duo_web_token.strip(),
         duo_web_default_category=(os.getenv("DUO_WEB_DEFAULT_CATEGORY") or "world").strip(),
         production_machine=is_production_machine(),
+        editorial_scoring_path=editorial_scoring_path,
+        editorial_scoring=editorial_scoring if isinstance(editorial_scoring, dict) else {},
+        web_prepare_articles=_get_bool("DUO_WEB_PREPARE_ARTICLES", True),
     )

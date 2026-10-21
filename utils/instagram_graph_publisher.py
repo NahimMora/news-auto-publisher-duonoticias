@@ -34,8 +34,9 @@ def _load_dotenv(path: Path) -> None:
 _load_dotenv(BASE_DIR / ".env")
 
 IG_GRAPH_VERSION = os.getenv("IG_GRAPH_VERSION", "v18.0")
-IG_ACCESS_TOKEN = os.getenv("IG_ACCESS_TOKEN")
-IG_USER_ID = os.getenv("IG_USER_ID")
+# META_* is the canonical .env naming (storage/settings.py); IG_*/FB_* stay as fallbacks.
+IG_ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN") or os.getenv("IG_ACCESS_TOKEN")
+IG_USER_ID = os.getenv("META_IG_USER_ID") or os.getenv("IG_USER_ID")
 IG_MEDIA_BASE_URL = os.getenv("IG_MEDIA_BASE_URL")
 MEDIA_STORAGE_PROVIDER = os.getenv("MEDIA_STORAGE_PROVIDER", "").strip().lower() or "cloudinary"
 IG_PUBLISH_VIDEOS = os.getenv("IG_PUBLISH_VIDEOS", "1") != "0"
@@ -50,8 +51,8 @@ IG_PUBLISHED_HISTORY_PATH = os.getenv(
     str(DATA_DIR / "noticias_publicadas_instagram.json"),
 )
 FB_FALLBACK_ENABLED = os.getenv("FB_FALLBACK_ON_IG_LIMIT", "1") != "0"
-FB_PAGE_ID = os.getenv("FB_PAGE_ID")
-FB_ACCESS_TOKEN = os.getenv("FB_ACCESS_TOKEN", IG_ACCESS_TOKEN)
+FB_PAGE_ID = os.getenv("META_PAGE_ID") or os.getenv("FB_PAGE_ID")
+FB_ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN") or os.getenv("FB_ACCESS_TOKEN") or IG_ACCESS_TOKEN
 
 CLOUDINARY_CLOUD_NAME = os.getenv("CLOUDINARY_CLOUD_NAME")
 CLOUDINARY_API_KEY = os.getenv("CLOUDINARY_API_KEY")

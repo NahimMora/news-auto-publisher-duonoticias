@@ -1,556 +1,269 @@
+"""Caption canonico de cada pieza seleccionada (una llamada a Gemini, con cache).
+
+- Solo se redacta lo que ya gano un cupo (antes se redactaba todo lo que pasaba
+  el scoring, aunque nunca se publicara).
+- Un solo texto para Instagram y Facebook: no hay dos llamadas equivalentes.
+- Cache por (version de prompt, modelo, contenido): un reintento de render o de
+  publicacion reutiliza el caption; si la nota cambia, la clave cambia.
+- Validacion local (``editorial/captions.py``): sin rotulos de plantilla, sin el
+  nombre del medio, cifras respaldadas por la fuente, menos de 2000 caracteres.
+  Si el modelo inventa una cifra se le pide una correccion una vez; si insiste,
+  se usa un texto armado solo con la fuente.
+"""
 from __future__ import annotations
 
+import hashlib
 import json
-import os
-import re
-from typing import Any, Dict
+import logging
+from typing import Any, Callable, Dict, Optional, Sequence, Tuple
 
-from editorial.prompting import build_editorial_user_prompt, is_x_editorial_row, load_master_prompt
-from growth.heuristics import classify_hook_type, classify_tone, text_signature
+from editorial import captions
+from editorial.prompting import SYSTEM_PROMPT, build_editorial_user_prompt, content_kind
+from jobs.events import mentions_salta
+from storage.editorial_config import EditorialConfig, load_editorial_config
 from storage.models import EditorialPackage
 from storage.settings import PipelineSettings, get_settings
-from utils.http_client import HttpClient
+from utils.llm_client import LLMError, LLMUsage, generate_json_with_usage
+
+LOGGER = logging.getLogger("duo.editorial")
+UsageSink = Callable[..., None]
 
 
-_EMOJI_RE = re.compile(
-    "["
-    "\U0001F300-\U0001FAFF"
-    "\U00002702-\U000027B0"
-    "\U000024C2-\U0001F251"
-    "]+",
-    flags=re.UNICODE,
-)
-_TRUNCATION_MARKER_RE = re.compile(r"(\[…\]|\[\.\.\.\]|&hellip;|\.\.\.)")
+def is_x_editorial_row(row: Dict[str, Any] | None) -> bool:
+    payload = row or {}
+    source = str(payload.get("source") or "").lower().strip()
+    source_type = str(payload.get("source_type") or "").lower().strip()
+    return source == "x" or source.startswith("x_") or source_type == "x_video"
+
+
+def editorial_cache_key(row: Dict[str, Any], *, version: str, extra_text: str = "", update: bool = False) -> str:
+    basis = "|".join(
+        [
+            version,
+            str(row.get("title") or ""),
+            str(row.get("summary") or ""),
+            str(row.get("body_text") or "")[:6000],
+            extra_text,
+            "update" if update else "",
+        ]
+    )
+    return hashlib.sha1(basis.encode("utf-8")).hexdigest()
 
 
 class EditorialAI:
-    def __init__(self, settings: PipelineSettings | None = None) -> None:
-        self.settings = settings or get_settings()
-
-    def generate(self, row: Dict[str, Any], growth_feedback: str = "", *, force_fallback: bool = False) -> EditorialPackage:
-        system_prompt = load_master_prompt(self.settings, row=row)
-        prompt = build_editorial_user_prompt(row, growth_feedback=growth_feedback)
-        input_payload = self._build_input_payload(
-            row,
-            growth_feedback=growth_feedback,
-            system_prompt=system_prompt,
-            user_prompt=prompt,
-        )
-        if force_fallback:
-            return self._fallback(
-                row,
-                growth_feedback=growth_feedback,
-                prompt=prompt,
-                input_payload=input_payload,
-            )
-        if not self.settings.openai_api_key:
-            return self._fallback(
-                row,
-                growth_feedback=growth_feedback,
-                prompt=prompt,
-                input_payload=input_payload,
-            )
-        try:
-            payload = self._call_openai(system_prompt, prompt)
-            normalized = self._normalize_payload(
-                payload,
-                row=row,
-                prompt=prompt,
-                input_payload=input_payload,
-                growth_feedback=growth_feedback,
-            )
-        except Exception:
-            return self._fallback(row, growth_feedback=growth_feedback, prompt=prompt, input_payload=input_payload)
-        return EditorialPackage(**normalized)
-
-    def _call_openai(self, system_prompt: str, user_prompt: str) -> Dict[str, Any]:
-        headers = {
-            "Authorization": f"Bearer {self.settings.openai_api_key}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "model": self.settings.openai_model,
-            "temperature": self.settings.openai_temperature,
-            "max_output_tokens": self.settings.openai_max_output_tokens,
-            "input": [
-                {
-                    "role": "system",
-                    "content": [{"type": "input_text", "text": system_prompt}],
-                },
-                {
-                    "role": "user",
-                    "content": [{"type": "input_text", "text": user_prompt}],
-                },
-            ],
-        }
-        client = HttpClient(headers=headers, timeout=90, retries=3, backoff_base=2, backoff_max=30)
-        try:
-            response = client.post(self.settings.openai_base_url, json=payload)
-            response.raise_for_status()
-            parsed = response.json()
-        finally:
-            client.close()
-        text = self._extract_output_text(parsed)
-        match = re.search(r"\{.*\}", text, re.S)
-        if not match:
-            raise RuntimeError("Respuesta editorial invalida")
-        return json.loads(match.group(0))
-
-    @staticmethod
-    def _extract_output_text(payload: Dict[str, Any]) -> str:
-        direct = str(payload.get("output_text") or "").strip()
-        if direct:
-            return direct
-        chunks = []
-        for item in payload.get("output") or []:
-            for block in item.get("content") or []:
-                if block.get("type") == "output_text" and block.get("text"):
-                    chunks.append(block["text"])
-        return "\n".join(chunks).strip()
-
-    def _normalize_payload(
+    def __init__(
         self,
+        settings: PipelineSettings | None = None,
+        config: EditorialConfig | None = None,
+        *,
+        call: Optional[Callable[[str, str], Tuple[Dict[str, Any], LLMUsage]]] = None,
+    ) -> None:
+        self.settings = settings or get_settings()
+        self.config = config or load_editorial_config(self.settings)
+        self.call = call or self._call_gemini
+        self.version = f"{self.config.prompt_version}|{self.settings.llm.model}"
+
+    @property
+    def llm_available(self) -> bool:
+        return self.settings.llm.ready or self.call is not self._call_gemini
+
+    def _call_gemini(self, system_prompt: str, user_prompt: str) -> Tuple[Dict[str, Any], LLMUsage]:
+        return generate_json_with_usage(
+            system_prompt,
+            user_prompt,
+            temperature=min(0.7, float(self.settings.llm_temperature)),
+            max_output_tokens=max(1300, int(self.settings.llm_max_output_tokens)),
+            config=self.settings.llm,
+        )
+
+    def generate(
+        self,
+        row: Dict[str, Any],
+        growth_feedback: str = "",
+        *,
+        relevance: Optional[Dict[str, Any]] = None,
+        extra_text: str = "",
+        update: bool = False,
+        force_fallback: bool = False,
+        usage_sink: Optional[UsageSink] = None,
+        cycle_id: str | None = None,
+    ) -> EditorialPackage:
+        relevance = relevance or self._stored_relevance(row)
+        cache_key = editorial_cache_key(row, version=self.version, extra_text=extra_text, update=update)
+        cached = self._cached(row, cache_key)
+        if cached is not None:
+            if usage_sink:
+                usage_sink(purpose="caption", model=self.settings.llm.model, items=1, input_tokens=0, output_tokens=0,
+                           latency_ms=0, ok=True, cache_hit=True, cycle_id=cycle_id, content_keys=[str(row.get("content_key") or "")])
+            return cached
+        source_text = " ".join(str(row.get(k) or "") for k in ("title", "summary", "body_text")) + " " + extra_text
+        prompt = build_editorial_user_prompt(row, relevance=relevance, extra_text=extra_text, update=update)
+        if force_fallback or not self.llm_available:
+            return self._fallback(row, relevance, cache_key, prompt, reason="fallback_sin_ia")
+
+        payload: Dict[str, Any] = {}
+        body = ""
+        issues: list = []
+        for attempt in range(2):
+            try:
+                payload, usage = self.call(SYSTEM_PROMPT, prompt)
+            except (LLMError, ValueError, RuntimeError) as exc:
+                self._record(usage_sink, None, ok=False, error=str(exc), cycle_id=cycle_id, row=row)
+                LOGGER.warning("caption %s: %s", row.get("content_key"), exc)
+                # Falla transitoria (503, cuota, red): la pieza vuelve a la cola y se reintenta
+                # en el proximo ciclo; no se publica un texto de respaldo pobre.
+                raise RuntimeError(f"caption_ia_no_disponible:{str(exc)[:120]}") from exc
+            self._record(usage_sink, usage, ok=True, cycle_id=cycle_id, row=row)
+            if payload.get("contexto_suficiente") is False:
+                break
+            category, sensitive = self._tone(payload, relevance)
+            payload = captions.apply_hook_variant(payload, str(row.get("content_key") or ""))
+            body = captions.compose_body(payload, category=category, sensitive=sensitive)
+            body = captions.strip_labels(body, self._source_names(row))
+            check = captions.check_caption(body, source_text=source_text)
+            issues = check.issues + captions.hook_issues(body)
+            if not issues:
+                break
+            prompt = build_editorial_user_prompt(
+                row, relevance=relevance, extra_text=extra_text, update=update,
+                correction="Tu version anterior tenia: " + "; ".join(issues) + ". Usa solo cifras que figuren en el material, no uses rotulos y deja el gancho en maximo 110 caracteres.",
+            )
+
+        if payload.get("contexto_suficiente") is False:
+            return self._package(row, relevance, cache_key, prompt, payload, title=str(row.get("title") or ""), body="",
+                                 publish=False, reason="contexto_insuficiente")
+        if issues and body and all(issue.startswith("gancho_largo") for issue in issues):
+            issues = []  # un gancho algo largo no justifica perder la redaccion: se publica igual
+        if issues or not body:
+            LOGGER.info("caption %s: se usa texto de la fuente (%s)", row.get("content_key"), ";".join(issues) or "vacio")
+            return self._fallback(row, relevance, cache_key, prompt, reason="fallback_validacion:" + ";".join(issues)[:120], payload=payload)
+        title = captions.fix_title(str(payload.get("titulo") or row.get("title") or ""))
+        return self._package(row, relevance, cache_key, prompt, payload, title=title, body=body, publish=True, reason="caption_ia_validado")
+
+    # -- armado ---------------------------------------------------------------
+
+    def _package(
+        self,
+        row: Dict[str, Any],
+        relevance: Optional[Dict[str, Any]],
+        cache_key: str,
+        prompt: str,
         payload: Dict[str, Any],
         *,
-        row: Dict[str, Any],
-        prompt: str,
-        input_payload: Dict[str, Any],
-        growth_feedback: str,
-    ) -> Dict[str, Any]:
-        source = str(row.get("source") or "").lower().strip()
-        x_style = is_x_editorial_row(row)
-        raw_title = payload.get("titulo_instagram") or payload.get("hook") or row.get("title") or row.get("summary") or ""
-        hook = self._clean_visual_text(raw_title)
-        context = self._clean_copy_text(payload.get("context") or payload.get("resumen") or row.get("summary") or "")
-        tension = self._clean_copy_text(payload.get("tension") or self._body_excerpt(row))
-        remate = self._clean_copy_text(payload.get("remate") or "")
-        cta = self._clean_copy_text(payload.get("cta") or "")
-        overlay = self._trim_overlay_words(
-            payload.get("overlay") or row.get("title") or raw_title,
-            max_words=10,
+        title: str,
+        body: str,
+        publish: bool,
+        reason: str,
+    ) -> EditorialPackage:
+        group = str((relevance or {}).get("group") or self.config.group_of(row.get("source"), row.get("source_type")))
+        visual = payload.get("visual") if isinstance(payload.get("visual"), dict) else {}
+        category = str(visual.get("categoria") or (relevance or {}).get("tema") or "")
+        flags = (relevance or {}).get("flags") or {}
+        relation = int(flags.get("relacion_salta") or 0)
+        if "relacion_salta" in flags:
+            # La evaluacion ya dijo si el hecho tiene que ver con Salta: una nota de Chile publicada
+            # por un medio salteno no lleva #Salta.
+            salta = relation >= 1
+        else:
+            salta = group == "local" or (group != "national" and mentions_salta(row.get("title"), row.get("summary")))
+        caption = captions.assemble(body, captions.build_hashtags(group=group, category=category, salta_related=salta)) if body else ""
+        overlay = captions.fix_title(title, max_chars=80)
+        return EditorialPackage(
+            hook=title,
+            context=str(row.get("summary") or "")[:300],
+            tension="",
+            remate="",
+            cta="",
+            caption=caption,
+            overlay=overlay,
+            publish=publish and bool(caption),
+            reason=reason,
+            angle=content_kind(row, relevance),
+            style=f"duo_unificado:{self.config.prompt_version}",
+            prompt_used=prompt,
+            input_payload={"cache_key": cache_key, "version": self.version, "group": group, "salta_hashtag": salta},
+            feedback_summary="",
+            hook_type="",
+            tone=content_kind(row, relevance),
+            pattern_signature=cache_key[:16],
+            anti_fatigue_notes=[],
+            raw_response=payload or {},
         )
-        caption = self._clean_caption_text(
-            payload.get("caption")
-            or payload.get("texto_instagram")
-            or self._compose_fallback_caption(row, context, tension, remate, cta)
-        )
-        if x_style:
-            caption = self._prepare_x_caption(caption, payload=payload, row=row)
-        caption = self._ensure_caption_depth(caption, row=row, source="x" if x_style else source, cta=cta)
-        caption = self._ensure_caption_emojis(caption, source="x" if x_style else source)
-        reason = str(
-            payload.get("reason")
-            or payload.get("decision_reason")
-            or payload.get("motivo")
-            or "editorial_ok"
-        )
-        publish = self._should_publish(payload)
-        style = str(payload.get("style") or payload.get("tono") or f"{source or 'duo'}_legacy")
-        hook_type = classify_hook_type(hook)
-        tone = classify_tone(hook, caption, style)
-        return {
-            "hook": hook,
-            "context": context,
-            "tension": tension,
-            "remate": remate,
-            "cta": cta,
-            "caption": caption,
-            "overlay": overlay,
-            "publish": publish,
-            "reason": reason,
-            "angle": str(payload.get("angle") or payload.get("tono") or "informativo"),
-            "style": style,
-            "prompt_used": prompt,
-            "input_payload": input_payload,
-            "feedback_summary": growth_feedback,
-            "hook_type": hook_type,
-            "tone": tone,
-            "pattern_signature": text_signature(hook, overlay, caption),
-            "anti_fatigue_notes": self._extract_anti_fatigue_notes(growth_feedback),
-            "raw_response": payload,
-        }
 
     def _fallback(
         self,
         row: Dict[str, Any],
-        *,
-        growth_feedback: str,
+        relevance: Optional[Dict[str, Any]],
+        cache_key: str,
         prompt: str,
-        input_payload: Dict[str, Any],
-    ) -> EditorialPackage:
-        title = self._clean_visual_text(str(row.get("title") or row.get("summary") or "Actualizacion").strip())
-        context = self._clean_copy_text(str(row.get("summary") or "").strip())
-        tension = self._clean_copy_text(self._body_excerpt(row))
-        remate = ""
-        caption = self._clean_caption_text(self._compose_fallback_caption(row, context, tension, remate, ""))
-        x_style = is_x_editorial_row(row)
-        if x_style:
-            caption = self._prepare_x_caption(caption, payload={}, row=row)
-        caption = self._ensure_caption_depth(
-            caption,
-            row=row,
-            source="x" if x_style else str(row.get("source") or "").lower().strip(),
-            cta="",
-        )
-        caption = self._ensure_caption_emojis(
-            caption,
-            source="x" if x_style else str(row.get("source") or "").lower().strip(),
-        )
-        return EditorialPackage(
-            hook=title,
-            context=context,
-            tension=tension,
-            remate=remate,
-            cta="",
-            caption=caption,
-            overlay=self._trim_overlay_words(title, max_words=10),
-            publish=True,
-            reason="fallback_editorial",
-            angle="informativo",
-            style=f"{('x' if x_style else str(row.get('source') or 'duo'))}_fallback",
-            prompt_used=prompt,
-            input_payload=input_payload,
-            feedback_summary=growth_feedback,
-            hook_type=classify_hook_type(title),
-            tone=classify_tone(title, caption, f"{('x' if x_style else str(row.get('source') or 'duo'))}_fallback"),
-            pattern_signature=text_signature(title, title, caption),
-            anti_fatigue_notes=self._extract_anti_fatigue_notes(growth_feedback),
-            raw_response={},
-        )
-
-    @classmethod
-    def _clean_copy_text(cls, value: object) -> str:
-        cleaned = cls._remove_truncated_tail(str(value or ""))
-        return re.sub(r"\s+", " ", cleaned).strip()
-
-    @classmethod
-    def _clean_visual_text(cls, value: object) -> str:
-        cleaned = cls._strip_emojis(str(value or ""))
-        cleaned = cls._strip_hashtags(cleaned)
-        return re.sub(r"\s+", " ", cleaned).strip()
-
-    @classmethod
-    def _strip_emojis(cls, value: str) -> str:
-        return _EMOJI_RE.sub("", value or "").strip()
-
-    @staticmethod
-    def _strip_hashtags(value: str) -> str:
-        cleaned = re.sub(r"#[\w_]+", "", value or "")
-        return re.sub(r"\s+\n", "\n", cleaned).strip()
-
-    @classmethod
-    def _trim_overlay_words(cls, value: object, max_words: int) -> str:
-        words = cls._clean_visual_text(value).split(" ")
-        result = " ".join(word for word in words if word)[:240]
-        return " ".join(result.split()[:max_words])[:90].strip()
-
-    @classmethod
-    def _clean_caption_text(cls, value: object) -> str:
-        cleaned = cls._remove_truncated_tail(str(value or "")).strip()
-        cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
-        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
-        return cleaned.strip()
-
-    @classmethod
-    def _remove_truncated_tail(cls, value: str) -> str:
-        text = str(value or "")
-        match = _TRUNCATION_MARKER_RE.search(text)
-        if not match:
-            return text
-        prefix = text[: match.start()].rstrip()
-        last_sentence = max(prefix.rfind("."), prefix.rfind("!"), prefix.rfind("?"))
-        if last_sentence >= 0:
-            return prefix[: last_sentence + 1].strip()
-        return ""
-
-    @classmethod
-    def _append_x_attribution(cls, caption: str, *, payload: Dict[str, Any], row: Dict[str, Any]) -> str:
-        source_attr = str(payload.get("source_attribution") or "").strip()
-        handle = str(row.get("source_handle") or row.get("author") or "").strip().lstrip("@")
-        attribution = source_attr or (f"Fuente: X / {handle}" if handle else "Fuente: X")
-        attribution = re.sub(r"https?://\S+", "", attribution)
-        attribution = attribution.replace("@", "")
-        attribution = re.sub(r"\s+", " ", attribution).strip()
-        if not attribution or attribution.lower() in caption.lower():
-            return caption
-        candidate = f"{caption}\n\n{attribution}".strip()
-        if len(candidate) <= 420:
-            return candidate
-        return f"{caption}\n\nFuente: X".strip() if "fuente:" not in caption.lower() and len(caption) <= 410 else caption
-
-    @classmethod
-    def _prepare_x_caption(cls, caption: str, *, payload: Dict[str, Any], row: Dict[str, Any]) -> str:
-        cleaned = cls._strip_x_attribution(caption)
-        cleaned = re.sub(r"https?://\S+", "", cleaned)
-        cleaned = re.sub(r"@\w+", "", cleaned)
-        cleaned = re.sub(r"#[\w_]+", "", cleaned)
-        cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
-        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
-        if len(cleaned) > 650:
-            cleaned = cleaned[:649].rsplit(" ", 1)[0].strip() or cleaned[:650].strip()
-        include_source = os.getenv("X_CAPTION_INCLUDE_SOURCE", "0").strip().lower() in {"1", "true", "yes", "on"}
-        if include_source:
-            return cls._append_x_attribution(cleaned, payload=payload, row=row)
-        return cleaned
-
-    @classmethod
-    def _ensure_caption_depth(cls, caption: str, *, row: Dict[str, Any], source: str, cta: str) -> str:
-        min_chars = 320 if source == "x" else 420
-        max_chars = 650 if source == "x" else 900
-        cleaned = cls._clean_caption_text(caption)
-        if len(cleaned) >= min_chars and len([line for line in cleaned.splitlines() if line.strip()]) >= 4:
-            return cls._limit_caption(cleaned, max_chars=max_chars)
-
-        title = cls._clean_copy_text(row.get("title") or "")
-        summary = cls._clean_copy_text(row.get("summary") or "")
-        facts = cls._fact_lines(row)
-        lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
-        if not lines and title:
-            lines.append(title)
-        if summary and not any(cls._is_duplicateish(line, summary) for line in lines):
-            lines.append(summary)
-        for fact in facts:
-            if not any(cls._is_duplicateish(line, fact) for line in lines):
-                lines.append(fact)
-            if len(lines) >= 6:
-                break
-        closing = cta or ("¿Vos cómo lo ves?" if source == "x" else "¿Qué opinás?")
-        if closing and not any(cls._is_duplicateish(line, closing) for line in lines):
-            lines.append(closing)
-        return cls._limit_caption("\n\n".join(lines), max_chars=max_chars)
-
-    @classmethod
-    def _fact_lines(cls, row: Dict[str, Any]) -> list[str]:
-        body = str(row.get("body_text") or "")
-        candidates = []
-        for part in re.split(r"(?<=[.!?])\s+|\n+", body):
-            if _TRUNCATION_MARKER_RE.search(part):
-                continue
-            clean = cls._clean_copy_text(part)
-            if len(clean) < 45:
-                continue
-            candidates.append(clean)
-            if len(candidates) >= 3:
-                break
-        return candidates
-
-    @classmethod
-    def _limit_caption(cls, caption: str, *, max_chars: int) -> str:
-        cleaned = cls._clean_caption_text(caption)
-        cleaned = re.sub(r"https?://\S+", "", cleaned)
-        cleaned = re.sub(r"@\w+", "", cleaned)
-        cleaned = re.sub(r"#[\w_]+", "", cleaned)
-        cleaned = cls._clean_caption_text(cleaned)
-        if len(cleaned) <= max_chars:
-            return cls._trim_incomplete_ending(cleaned)
-        trimmed = cleaned[: max_chars - 1].rstrip()
-        trimmed = trimmed.rsplit(" ", 1)[0].strip() or cleaned[:max_chars].strip()
-        return cls._trim_incomplete_ending(trimmed)
-
-    @classmethod
-    def _trim_incomplete_ending(cls, caption: str) -> str:
-        cleaned = cls._clean_caption_text(caption)
-        if not cleaned or cleaned[-1] in ".!?":
-            return cleaned
-        last_sentence = max(cleaned.rfind("."), cleaned.rfind("!"), cleaned.rfind("?"))
-        if last_sentence >= max(0, len(cleaned) - 260):
-            return cleaned[: last_sentence + 1].strip()
-        parts = [part.strip() for part in cleaned.split("\n\n") if part.strip()]
-        if len(parts) > 1:
-            return "\n\n".join(parts[:-1]).strip()
-        return cleaned
-
-    @classmethod
-    def _strip_x_attribution(cls, caption: str) -> str:
-        cleaned_lines = []
-        for line in str(caption or "").splitlines():
-            stripped = line.strip()
-            normalized = stripped.lower()
-            if re.match(r"^(fuente|via|vía|credito|crédito|video original)\b", normalized):
-                continue
-            cleaned_lines.append(line)
-        cleaned = "\n".join(cleaned_lines).strip()
-        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
-        cleaned = re.sub(
-            r"(?i)(?:\n\n|\s+)(?:video original de|fuente:|credito:|crédito:)\s+[^.\n]{1,90}$",
-            "",
-            cleaned,
-        ).strip()
-        return cleaned
-
-    @classmethod
-    def _compose_fallback_caption(
-        cls,
-        row: Dict[str, Any],
-        context: str,
-        tension: str,
-        remate: str,
-        cta: str,
-    ) -> str:
-        source = str(row.get("source") or "").lower().strip()
-        title = str(row.get("title") or row.get("summary") or "").strip()
-        if source == "noticiasargentinas":
-            lines = [title if title else ""]
-            if context:
-                lines.append(context)
-            if tension and tension not in context:
-                lines.append(tension)
-            question = cta or "¿Como lo ves?"
-            lines.append(question)
-            return "\n\n".join(line for line in lines if line)
-        if is_x_editorial_row(row):
-            lead = title or context or tension or "El video ya esta dando que hablar"
-            lead = cls._ensure_x_caption_emoji(lead)
-            lines = [lead]
-            if context and not cls._is_duplicateish(lead, context):
-                lines.append(context)
-            if cta:
-                lines.append(cta)
-            else:
-                lines.append("¿Qué te generó esta historia?")
-            return "\n\n".join(line for line in lines if line)
-        return cls._compose_plain_caption(title, context, tension, remate, cta)
-
-    @classmethod
-    def _ensure_x_caption_emoji(cls, text: str) -> str:
-        clean = str(text or "").strip()
-        if not clean:
-            return ""
-        if _EMOJI_RE.search(clean):
-            return clean
-        lowered = clean.lower()
-        if any(token in lowered for token in ("robo", "inseguridad", "policia", "policía", "banda")):
-            return f"🚨 {clean}"
-        if any(token in lowered for token in ("insolito", "insólito", "absurdo", "raro")):
-            return f"🤯 {clean}"
-        if any(token in lowered for token in ("susto", "accidente", "peligro")):
-            return f"😱 {clean}"
-        return f"🔥 {clean}"
-
-    @classmethod
-    def _compose_plain_caption(cls, *parts: object) -> str:
-        cleaned_parts = []
-        for part in parts:
-            text = cls._clean_copy_text(part)
-            if not text:
-                continue
-            if cleaned_parts and cls._is_duplicateish(cleaned_parts[-1], text):
-                continue
-            cleaned_parts.append(text)
-            if len(cleaned_parts) >= 3:
-                break
-        caption = "\n\n".join(cleaned_parts)
-        if len(caption) <= 700:
-            return caption
-        trimmed = caption[:699].rstrip()
-        trimmed = trimmed.rsplit(" ", 1)[0].strip() or trimmed
-        return trimmed
-
-    @classmethod
-    def _ensure_caption_emojis(cls, caption: str, *, source: str) -> str:
-        cleaned = cls._clean_caption_text(caption)
-        if not cleaned:
-            return cleaned
-        normalized_source = str(source or "").lower().strip()
-        target = 4 if normalized_source == "x" else 4 if normalized_source == "paparazzi" else 3
-        if len(_EMOJI_RE.findall(cleaned)) >= target:
-            return cleaned
-        paragraphs = [part.strip() for part in cleaned.split("\n\n") if part.strip()]
-        if not paragraphs:
-            return cleaned
-        emoji_pool = cls._emoji_pool_for_source(normalized_source, cleaned)
-        emoji_index = 0
-        for index, paragraph in enumerate(paragraphs):
-            if len(_EMOJI_RE.findall("\n\n".join(paragraphs))) >= target:
-                break
-            if _EMOJI_RE.search(paragraph):
-                continue
-            emoji = emoji_pool[min(emoji_index, len(emoji_pool) - 1)]
-            emoji_index += 1
-            paragraphs[index] = f"{emoji} {paragraph}".strip()
-        return "\n\n".join(paragraphs).strip()
-
-    @classmethod
-    def _emoji_pool_for_source(cls, source: str, caption: str) -> list[str]:
-        lowered = str(caption or "").lower()
-        if source == "x":
-            pool = ["🔥", "😱", "📹", "👉", "😳", "🚨"]
-            if any(token in lowered for token in ("robo", "policia", "policía", "allanamiento", "detenido", "seguridad")):
-                pool = ["🚨", "😱", "📹", "👉", "⚠️", "😳"]
-            elif any(token in lowered for token in ("insolito", "insólito", "viral", "escandalo", "escándalo")):
-                pool = ["🤯", "🔥", "📹", "👉", "😳", "👀"]
-            return pool
-        if source == "paparazzi":
-            return ["😱", "🔥", "👀", "💥", "😮", "👉"]
-        if any(token in lowered for token in ("dolar", "dólar", "mercado", "economia", "economía", "inflacion", "inflación")):
-            return ["📌", "💸", "📉", "👉"]
-        if any(token in lowered for token in ("gobierno", "congreso", "presidente", "ministro", "ley")):
-            return ["📌", "🗳️", "📰", "👉"]
-        if any(token in lowered for token in ("crimen", "policial", "detenido", "allanamiento", "alerta")):
-            return ["🚨", "📌", "📰", "👉"]
-        return ["📰", "📌", "👉", "📍"]
-
-    @staticmethod
-    def _is_duplicateish(left: str, right: str) -> bool:
-        left_norm = _EMOJI_RE.sub("", left or "").lower().strip(". ")
-        right_norm = _EMOJI_RE.sub("", right or "").lower().strip(". ")
-        left_norm = re.sub(r"\s+", " ", left_norm)
-        right_norm = re.sub(r"\s+", " ", right_norm)
-        if not left_norm or not right_norm:
-            return False
-        if left_norm == right_norm or left_norm in right_norm or right_norm in left_norm:
-            return True
-        min_prefix = min(50, len(left_norm), len(right_norm))
-        return min_prefix >= 25 and left_norm[:min_prefix] == right_norm[:min_prefix]
-
-    @classmethod
-    def _body_excerpt(cls, row: Dict[str, Any]) -> str:
-        body = cls._clean_copy_text(row.get("body_text") or "")
-        if not body:
-            return ""
-        sentences = re.split(r"(?<=[.!?])\s+", body)
-        for sentence in sentences:
-            cleaned = cls._clean_copy_text(sentence)
-            if cleaned:
-                return cleaned
-        return body[:220].strip()
-
-    @staticmethod
-    def _build_input_payload(
-        row: Dict[str, Any],
         *,
-        growth_feedback: str,
-        system_prompt: str,
-        user_prompt: str,
-    ) -> Dict[str, Any]:
-        return {
-            "source": str(row.get("source") or ""),
-            "source_handle": str(row.get("source_handle") or ""),
-            "title": str(row.get("title") or ""),
-            "summary": str(row.get("summary") or ""),
-            "body_text": str(row.get("body_text") or ""),
-            "score_json": str(row.get("score_json") or ""),
-            "visible_metrics_json": str(row.get("visible_metrics_json") or ""),
-            "ranking_signals_json": str(row.get("ranking_signals_json") or ""),
-            "growth_feedback": growth_feedback,
-            "system_prompt": system_prompt,
-            "user_prompt": user_prompt,
-        }
+        reason: str,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> EditorialPackage:
+        if is_x_editorial_row(row):
+            # Un video de redes sin IA no tiene contexto verificable suficiente: no se publica solo.
+            return self._package(row, relevance, cache_key, prompt, payload or {}, title=str(row.get("title") or ""), body="",
+                                 publish=False, reason=f"{reason};video_x_sin_redaccion")
+        category, _ = self._tone(payload or {}, relevance)
+        body = captions.fallback_body(str(row.get("title") or ""), str(row.get("summary") or ""), str(row.get("body_text") or ""), category=category)
+        visual_payload = {"visual": (payload or {}).get("visual")} if payload and payload.get("visual") else {}
+        return self._package(row, relevance, cache_key, prompt, visual_payload, title=captions.fix_title(str(row.get("title") or "")),
+                             body=body, publish=True, reason=reason)
 
     @staticmethod
-    def _extract_anti_fatigue_notes(growth_feedback: str) -> list[str]:
-        notes = []
-        for line in (growth_feedback or "").splitlines():
-            line = line.strip()
-            if line.startswith("- ") and "repet" in line.lower():
-                notes.append(line[2:])
-        return notes[:5]
+    def _tone(payload: Dict[str, Any], relevance: Optional[Dict[str, Any]]) -> Tuple[str, bool]:
+        """Categoria del hecho y si es sensible (policiales/justicia o gravedad >= 6): define emojis."""
+        visual = payload.get("visual") if isinstance(payload.get("visual"), dict) else {}
+        category = str(visual.get("categoria") or (relevance or {}).get("tema") or "")
+        gravedad = ((relevance or {}).get("components") or {}).get("gravedad")
+        try:
+            gravedad = float(gravedad) if gravedad is not None else None
+        except (TypeError, ValueError):
+            gravedad = None
+        return category, captions.is_sensitive(category, gravedad)
+
+    def _cached(self, row: Dict[str, Any], cache_key: str) -> Optional[EditorialPackage]:
+        if str(row.get("editorial_cache_key") or "") != cache_key:
+            return None
+        try:
+            payload = json.loads(str(row.get("editorial_json") or ""))
+        except ValueError:
+            return None
+        if not isinstance(payload, dict) or not payload.get("caption"):
+            return None
+        try:
+            return EditorialPackage(**{k: v for k, v in payload.items() if k in EditorialPackage.__dataclass_fields__})
+        except TypeError:
+            return None
+
+    def _source_names(self, row: Dict[str, Any]) -> Sequence[str]:
+        names = {spec.display_name for spec in self.config.sources.values()}
+        names.update({"Que Pasa Salta", "QuePasaSalta", "Informate", "El Tribuno de Salta"})
+        return sorted(names, key=len, reverse=True)
 
     @staticmethod
-    def _should_publish(payload: Dict[str, Any]) -> bool:
-        if "publish" in payload:
-            return bool(payload.get("publish"))
-        decision = str(payload.get("decision") or "").strip().lower()
-        if not decision:
-            return True
-        return decision in {"publish", "publicar", "published", "ok"}
+    def _stored_relevance(row: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            payload = json.loads(str(row.get("relevance_json") or "{}"))
+        except ValueError:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _record(self, sink: Optional[UsageSink], usage: Optional[LLMUsage], *, ok: bool, cycle_id: str | None, row: Dict[str, Any], error: str = "") -> None:
+        if sink is None:
+            return
+        input_tokens = usage.input_tokens if usage else None
+        output_tokens = usage.output_tokens if usage else None
+        sink(
+            purpose="caption",
+            model=usage.model if usage else self.settings.llm.model,
+            items=1,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            latency_ms=usage.latency_ms if usage else 0,
+            ok=ok,
+            error=error or (f"respaldo_por_saturacion_de:{usage.fallback_from}" if usage and usage.fallback_from else ""),
+            estimated_cost_usd=self.config.estimated_cost_usd(input_tokens or 0, output_tokens or 0, usage.model) if usage else None,
+            cycle_id=cycle_id,
+            content_keys=[str(row.get("content_key") or "")],
+        )
