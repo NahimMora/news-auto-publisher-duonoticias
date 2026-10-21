@@ -42,6 +42,9 @@ _NON_ARTICLE_PATTERNS = (
     re.compile(r"^(en vivo|minuto a minuto)\b"),
     re.compile(r"\bhoroscopo de hoy\b"),
     re.compile(r"^(seccion|categoria|etiqueta)\b"),
+    # Resumenes de agencias con titulo-fecha: "Domingo, 18 de octubre de 2026 (12:00 GMT)".
+    re.compile(r"^(lunes|martes|miercoles|jueves|viernes|sabado|domingo),? \d{1,2} de [a-z]+ de \d{4}"),
+    re.compile(r"\(\d{1,2}:\d{2} gmt\)"),
 )
 # Tolerancia para relojes de servidores adelantados.
 FUTURE_TOLERANCE = timedelta(hours=2)
@@ -93,8 +96,16 @@ class ContentPolicy:
             return ContentPolicyDecision(False, "texto_insuficiente", created_at=local_created)
 
         has_video = self._has_video_asset(row)
+        image_ok = self.config.image_min_score(source) is not None and source_type != "x_video"
         if (self.config.requires_video(source) or source_type == "x_video") and not has_video:
+            if image_ok:
+                return ContentPolicyDecision(True, f"valida; video=no; imagen_si_relevancia>={self.config.image_min_score(source):.0f}", created_at=local_created)
             return ContentPolicyDecision(False, "sin_video", created_at=local_created)
+        if has_video and self.config.requires_video(source) and self._declared_video_too_long(row):
+            # Sin recorte, el reel es el video completo: uno declarado de mas de 90 s no se puede usar.
+            if image_ok:
+                return ContentPolicyDecision(True, f"valida; video_mayor_{self.config.max_reel_seconds:.0f}s; imagen_si_relevancia>={self.config.image_min_score(source):.0f}", created_at=local_created)
+            return ContentPolicyDecision(False, f"video_mayor_{self.config.max_reel_seconds:.0f}s", created_at=local_created)
         return ContentPolicyDecision(True, f"valida; video={'si' if has_video else 'no'}", created_at=local_created)
 
     def today_start_utc(self) -> str:
@@ -116,6 +127,21 @@ class ContentPolicy:
             and (str(asset.get("path") or "").strip() or str(asset.get("remote_url") or "").strip())
             for asset in (assets if isinstance(assets, list) else [])
         )
+
+    def _declared_video_too_long(self, row: Dict[str, Any]) -> bool:
+        """Todos los videos con duracion declarada superan el tope (sin duracion: se mide al bajarlo).
+
+        Con ``media.trim_long_videos`` ningun video es demasiado largo: se usan sus primeros segundos.
+        """
+        if self.config.trim_long_videos:
+            return False
+        try:
+            assets = json.loads(str(row.get("assets_json") or "[]"))
+        except ValueError:
+            return False
+        durations = [float(a.get("duration_seconds") or 0) for a in assets if isinstance(a, dict) and a.get("kind") == "video"] if isinstance(assets, list) else []
+        limit = self.config.max_reel_seconds + 0.5
+        return bool(durations) and all(d > limit for d in durations)
 
     @staticmethod
     def _raw_flag(row: Dict[str, Any], key: str) -> bool:

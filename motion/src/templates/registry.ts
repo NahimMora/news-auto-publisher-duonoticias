@@ -5,7 +5,12 @@ import { DataExplainer } from "./DataExplainer";
 import { EditorialNews } from "./EditorialNews";
 import { templateMeta, type TemplateMeta } from "./meta";
 import type { TemplateProps } from "./shared";
+import { ServiceBoard } from "./ServiceBoard";
 import { StaticPost } from "./StaticPost";
+import { StoryCard } from "./StoryCard";
+import { VideoCover } from "./VideoCover";
+import { VideoNews } from "./VideoNews";
+import { WeeklyTop } from "./WeeklyTop";
 
 /**
  * Registro de plantillas. Agregar una plantilla nueva no toca a las demas:
@@ -19,6 +24,11 @@ const components: Record<TemplateId, React.FC<TemplateProps>> = {
   editorial: EditorialNews,
   data: DataExplainer,
   static: StaticPost,
+  video: VideoNews,
+  cover: VideoCover,
+  board: ServiceBoard,
+  story: StoryCard,
+  weekly: WeeklyTop,
 };
 
 export const getTemplate = (id: TemplateId): TemplateDefinition => {

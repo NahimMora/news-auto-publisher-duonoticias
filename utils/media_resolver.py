@@ -4,7 +4,9 @@ Recibe el asset de video que dejo el extractor (``meta.video_kind``: mp4, hls,
 tweet, onvideo, jwplayer, youtube) y devuelve un MP4 local verificado con
 ffprobe: tiene pista de video, se puede leer y dura al menos
 ``media.min_video_seconds`` (los previews animados de 2 s no son el video de la
-nota). Cada URL se baja una sola vez: ``data/media_cache/<sha1(url)>.mp4``; los
+nota) y como mucho ``media.max_reel_seconds`` (90 s). Un video mas largo se recorta a sus
+primeros 90 s si ``media.trim_long_videos`` esta activo (un unico tramo, nunca partes); si no,
+no se usa (``too_long``). Cada URL se baja una sola vez: ``data/media_cache/<sha1(url)>.mp4``; los
 ciclos siguientes reutilizan el archivo y su resultado de ffprobe.
 
 Los fallos se informan con un motivo legible (``VideoUnavailable.reason``) para
@@ -29,6 +31,8 @@ from storage.models import Asset
 from utils.tls import ca_bundle_for
 
 LOGGER = logging.getLogger("duo.media")
+# Margen sobre el tope del reel (redondeos de duracion entre contenedores).
+TOLERANCE_SECONDS = 0.5
 _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
 
@@ -50,6 +54,8 @@ class ResolvedVideo:
     kind: str
     cache_hit: bool = False
     text: str = ""
+    # True si el original duraba mas que el tope y se recorto a sus primeros segundos.
+    trimmed: bool = False
 
     def as_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -95,7 +101,8 @@ class MediaResolver:
         min_seconds: float = 5.0,
         max_download_mb: float = 400.0,
         timeout_seconds: int = 240,
-        max_seconds: float = 123.0,
+        max_seconds: float = 90.0,
+        trim_long: bool = False,
     ) -> None:
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -104,8 +111,11 @@ class MediaResolver:
         self.min_seconds = float(min_seconds)
         self.max_bytes = int(max_download_mb * 1024 * 1024)
         self.timeout = int(timeout_seconds)
-        # Solo se usan los primeros 2 tramos de 60 s: no se baja el resto de un video largo.
+        # Tope del reel (video completo). Se bajan 2 s de mas para saber si el original lo supera
+        # sin descargar el resto.
         self.max_seconds = float(max_seconds)
+        # Mas largo que el tope: se usan solo los primeros max_seconds (si no, too_long).
+        self.trim_long = bool(trim_long)
 
     # -- API ----------------------------------------------------------------
 
@@ -116,12 +126,18 @@ class MediaResolver:
         if not url:
             raise VideoUnavailable("no_video_url")
         kind = str((asset.meta or {}).get("video_kind") or "") or _guess_kind(url)
+        declared = float(asset.duration_seconds or 0.0)
+        if declared > self.max_seconds + TOLERANCE_SECONDS and not self.trim_long:
+            raise VideoUnavailable("too_long", f"{declared:.0f}s > {self.max_seconds:.0f}s (duracion declarada)")
         return self.resolve(url, kind)
 
     def resolve(self, url: str, kind: str) -> ResolvedVideo:
         target = self.cache_dir / f"{hashlib.sha1(url.encode('utf-8')).hexdigest()}.mp4"
         meta_path = target.with_suffix(".json")
         cached = self._read_meta(meta_path)
+        if self.trim_long and cached.get("reason") == "too_long":
+            # Descartado antes de activar el recorte: se vuelve a bajar y se recorta.
+            cached = {}
         if target.exists() and target.stat().st_size > 0 and cached.get("status") != "unusable":
             try:
                 return self._verified(target, source_url=url, kind=kind, cache_hit=True, text=str(cached.get("text") or ""))
@@ -155,7 +171,7 @@ class MediaResolver:
         except VideoUnavailable as exc:
             target.unlink(missing_ok=True)
             # Lo definitivamente inutilizable no se vuelve a bajar en cada ciclo.
-            if exc.reason in {"too_short", "unsupported_format", "too_large"}:
+            if exc.reason in {"too_short", "too_long", "unsupported_format", "too_large"}:
                 self._write_meta(meta_path, {"status": "unusable", "reason": exc.reason, "detail": exc.detail, "url": url})
             raise
         self._write_meta(meta_path, {"status": "ok", "url": url, "kind": kind, "text": text, **resolved.as_dict()})
@@ -167,6 +183,13 @@ class MediaResolver:
         info = probe_video(str(path), self.ffprobe)
         if info["duration"] < self.min_seconds:
             raise VideoUnavailable("too_short", f"{info['duration']:.1f}s < {self.min_seconds:.0f}s")
+        trimmed = False
+        if info["duration"] > self.max_seconds + TOLERANCE_SECONDS:
+            if not self.trim_long:
+                raise VideoUnavailable("too_long", f"{info['duration']:.0f}s > {self.max_seconds:.0f}s")
+            path = self._trim(path)
+            info = probe_video(str(path), self.ffprobe)
+            trimmed = True
         if info["width"] <= 0 or info["height"] <= 0:
             raise VideoUnavailable("unsupported_format", "dimensiones invalidas")
         return ResolvedVideo(
@@ -179,7 +202,36 @@ class MediaResolver:
             kind=kind,
             cache_hit=cache_hit,
             text=text,
+            trimmed=trimmed,
         )
+
+    def _trim(self, path: Path) -> Path:
+        """Primeros max_seconds del video (copia directa; si queda largo, recodifica).
+
+        Un archivo de la cache se reemplaza; uno local de otro lado se recorta a la cache.
+        """
+        inside = path.parent.resolve() == self.cache_dir.resolve()
+        target = path if inside else self.cache_dir / f"{hashlib.sha1(str(path).encode('utf-8')).hexdigest()}.mp4"
+        part = target.with_name(target.stem + ".trim.mp4")
+        seconds = f"{self.max_seconds:.3f}"
+        attempts = (
+            ["-c", "copy"],
+            ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-b:a", "160k"],
+        )
+        for codec in attempts:
+            command = [self.ffmpeg, "-v", "error", "-y", "-i", str(path), "-t", seconds, *codec, "-movflags", "+faststart", str(part)]
+            try:
+                result = subprocess.run(command, capture_output=True, text=True, timeout=self.timeout)
+            except subprocess.TimeoutExpired:
+                part.unlink(missing_ok=True)
+                continue
+            if result.returncode == 0 and part.exists():
+                duration = probe_video(str(part), self.ffprobe)["duration"]
+                if 0 < duration <= self.max_seconds + TOLERANCE_SECONDS:
+                    part.replace(target)
+                    return target
+            part.unlink(missing_ok=True)
+        raise VideoUnavailable("trim_failed", f"no se pudo recortar a {self.max_seconds:.0f}s")
 
     # -- descargas -------------------------------------------------------------
 
@@ -216,7 +268,7 @@ class MediaResolver:
         part = target.with_name(target.stem + ".part.mp4")
         command = [
             self.ffmpeg, "-v", "error", "-y", "-user_agent", _UA, "-i", manifest,
-            "-t", f"{self.max_seconds:.0f}", "-c", "copy", "-bsf:a", "aac_adtstoasc", str(part),
+            "-t", f"{self.max_seconds + 2:.0f}", "-c", "copy", "-bsf:a", "aac_adtstoasc", str(part),
         ]
         try:
             result = subprocess.run(command, capture_output=True, text=True, timeout=self.timeout)

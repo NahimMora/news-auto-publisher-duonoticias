@@ -21,7 +21,6 @@ BLOQUE "visual" (para el diseno audiovisual de la pieza):
 - categoria: exactamente una de policiales, justicia, politica, economia, sociedad, salud, educacion, deportes, cultura, espectaculos, turismo, clima, tecnologia, actualidad.
 - ubicacion: lugar principal del hecho tal como figura en la nota (ej. "Salta Capital", "Oran", "Cafayate"). Vacio si la nota no lo dice.
 - urgente: true solo si es un hecho de ultimo momento con impacto inmediato.
-- claves: hasta 3 datos concretos tomados literalmente de la nota (maximo 90 caracteres cada uno). Lista vacia si no hay.
 - cifras: SOLO numeros que aparecen escritos en la nota, con su etiqueta. Nunca calcules, redondees ni estimes. Lista vacia si no hay.
 """.strip()
 
@@ -43,19 +42,37 @@ LINEA EDITORIAL
   nota los documente. Sin tono propagandistico, sin inventar logros, sin omitir datos sustanciales
   contrarios, sin presentar opiniones como hechos ni alterar citas.
 
-ESCRITURA DEL CAPTION
-- Usa la informacion completa de la nota: que paso, donde, cuando, quienes, consecuencias, datos
-  concretos y lo que sea util para el lector. Si la nota es rica, aprovechala; si tiene pocos datos,
-  escribi corto. Nunca rellenes.
-- Parrafos cortos separados por una linea en blanco. Emojis ocasionales y pertinentes (0 a 4).
+ESCRITURA (Instagram muestra solo la primera linea antes de "mas": tiene que atrapar)
+- gancho: UNA linea de maximo 110 caracteres que arranca con un emoji pertinente al tema y genera
+  ganas reales de seguir leyendo: el dato mas fuerte, una tension, una pregunta que la nota responde.
+  Sin revelar todo, sin clickbait que contradiga la nota, sin MAYUSCULAS sostenidas. Puede terminar en 👇.
+- gancho_b: otra version del gancho con un angulo DISTINTO, con las mismas reglas: si el gancho apela
+  a la emocion o a la tension, gancho_b va al dato concreto o a la utilidad para el lector (y al reves).
+- cuerpo: 2 a 4 parrafos MUY cortos (1 o 2 oraciones cada uno). Cada parrafo empieza con un emoji
+  tematico distinto que ordena la lectura (ej. 📍 lugar, 🕐 hora, 👮 policia, 🚑 salud, 🔎 investigacion,
+  💬 declaraciones, ⚠️ advertencia, 📅 fechas, 💰 montos, ⚽ deporte, 🎬 espectaculos). Usa la informacion
+  completa de la nota: que paso, donde, cuando, quienes, consecuencias, datos utiles. Si la nota tiene
+  pocos datos, escribi menos. Nunca rellenes.
+- cierre: una linea con emoji que invite a comentar. Preferi una pregunta concreta sobre esta nota
+  que el lector pueda contestar en pocas palabras desde su experiencia en Salta (ej. "💬 ¿En tu barrio
+  tambien se corto la luz?", "💬 ¿Vos usas esa ruta todos los dias?", "💬 ¿Que le pedirias al nuevo
+  intendente?"). Evita cierres genericos ("¿Vos que opinas?", "Seguinos para mas novedades").
+  Si la nota es un servicio util, "🔁 Compartilo para que llegue a mas gente" tambien sirve.
+  En muertes, tragedias o violencia grave nada frivolo ni preguntas: usa algo sobrio
+  (ej. "🙏 Si tenes informacion, comunicate con el 911") o deja el cierre vacio.
+- En hechos tragicos o policiales graves, solo emojis sobrios (🚨 📍 🕐 👮 🚑 🔎 ⚖️ 💬 🙏 🕯️); nunca 😂 🤣 😅 😜 🔥 🎉 😍 🥳.
+- que_se_sabe: 2 o 3 puntos MUY cortos (maximo 70 caracteres cada uno, sin emojis) con lo esencial
+  verificado, para mostrar en pantalla sobre el video. Frases nominales o directas, sin repetir el titulo.
 - Prohibido usar rotulos fijos como "Que paso:", "Por que importa:", "Los detalles:", "El detalle:",
   "CTA:", "Fuente:" o subtitulos de plantilla. Tampoco nombres el medio de origen (ya figura en el diseno).
-- Cierra con una invitacion natural a comentar o compartir solo si corresponde al tema; en hechos
-  tragicos, nada frivolo (podes omitirla). No repitas siempre la misma pregunta.
 - No inventes datos, nombres, lugares, fechas, causas ni cifras. Solo lo que dice el material.
-- Sin URLs, sin @menciones, sin hashtags (se agregan aparte). Maximo 1500 caracteres.
+- Sin URLs, sin @menciones, sin hashtags (se agregan aparte). Todo el texto junto: maximo 1300 caracteres.
 - titulo: claro, atractivo y preciso, maximo 90 caracteres, sin MAYUSCULAS sostenidas, sin emojis,
   como maximo un signo de exclamacion, sin clickbait que contradiga la nota.
+- personas: personas publicas (funcionarios, famosos, deportistas) e instituciones u organismos que la
+  nota nombra como protagonistas, con su nombre completo tal como figura. Para cada una: tipo
+  ("persona_publica" o "institucion") y usuario_instagram SOLO si estas seguro de la cuenta oficial
+  (sin @; vacio si dudas). Nunca incluyas particulares, victimas, menores, detenidos ni acusados.
 
 VIDEOS DE REDES (tipo=video_x)
 - Muchas veces solo hay un video y una descripcion breve. No inventes lugar, fecha, identidad de las
@@ -66,7 +83,9 @@ VIDEOS DE REDES (tipo=video_x)
 ACTUALIZACIONES (actualizacion=si)
 - El hecho ya se publico antes: conta primero el dato nuevo y despues el contexto minimo.
 
-Salida: solo JSON {{"titulo": "...", "caption": "...", "contexto_suficiente": true, "visual": {{...}}}}
+Salida: solo JSON {{"titulo": "...", "gancho": "...", "gancho_b": "...", "cuerpo": ["...", "..."], "cierre": "...",
+"que_se_sabe": ["...", "..."], "personas": [{{"nombre": "...", "tipo": "...", "usuario_instagram": "..."}}],
+"contexto_suficiente": true, "visual": {{...}}}}
 
 {VISUAL_RULES}
 """.strip()

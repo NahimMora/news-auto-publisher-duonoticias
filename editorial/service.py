@@ -72,7 +72,7 @@ class EditorialAI:
             system_prompt,
             user_prompt,
             temperature=min(0.7, float(self.settings.llm_temperature)),
-            max_output_tokens=max(900, int(self.settings.llm_max_output_tokens)),
+            max_output_tokens=max(1300, int(self.settings.llm_max_output_tokens)),
             config=self.settings.llm,
         )
 
@@ -116,19 +116,24 @@ class EditorialAI:
             self._record(usage_sink, usage, ok=True, cycle_id=cycle_id, row=row)
             if payload.get("contexto_suficiente") is False:
                 break
-            body = captions.strip_labels(str(payload.get("caption") or ""), self._source_names(row))
+            category, sensitive = self._tone(payload, relevance)
+            payload = captions.apply_hook_variant(payload, str(row.get("content_key") or ""))
+            body = captions.compose_body(payload, category=category, sensitive=sensitive)
+            body = captions.strip_labels(body, self._source_names(row))
             check = captions.check_caption(body, source_text=source_text)
-            issues = check.issues
+            issues = check.issues + captions.hook_issues(body)
             if not issues:
                 break
             prompt = build_editorial_user_prompt(
                 row, relevance=relevance, extra_text=extra_text, update=update,
-                correction="Tu version anterior tenia: " + "; ".join(issues) + ". Usa solo cifras que figuren en el material y no uses rotulos.",
+                correction="Tu version anterior tenia: " + "; ".join(issues) + ". Usa solo cifras que figuren en el material, no uses rotulos y deja el gancho en maximo 110 caracteres.",
             )
 
         if payload.get("contexto_suficiente") is False:
             return self._package(row, relevance, cache_key, prompt, payload, title=str(row.get("title") or ""), body="",
                                  publish=False, reason="contexto_insuficiente")
+        if issues and body and all(issue.startswith("gancho_largo") for issue in issues):
+            issues = []  # un gancho algo largo no justifica perder la redaccion: se publica igual
         if issues or not body:
             LOGGER.info("caption %s: se usa texto de la fuente (%s)", row.get("content_key"), ";".join(issues) or "vacio")
             return self._fallback(row, relevance, cache_key, prompt, reason="fallback_validacion:" + ";".join(issues)[:120], payload=payload)
@@ -153,8 +158,14 @@ class EditorialAI:
         group = str((relevance or {}).get("group") or self.config.group_of(row.get("source"), row.get("source_type")))
         visual = payload.get("visual") if isinstance(payload.get("visual"), dict) else {}
         category = str(visual.get("categoria") or (relevance or {}).get("tema") or "")
-        relation = int(((relevance or {}).get("flags") or {}).get("relacion_salta") or 0)
-        salta = group == "local" or relation >= 2 or (group != "national" and mentions_salta(row.get("title"), row.get("summary")))
+        flags = (relevance or {}).get("flags") or {}
+        relation = int(flags.get("relacion_salta") or 0)
+        if "relacion_salta" in flags:
+            # La evaluacion ya dijo si el hecho tiene que ver con Salta: una nota de Chile publicada
+            # por un medio salteno no lleva #Salta.
+            salta = relation >= 1
+        else:
+            salta = group == "local" or (group != "national" and mentions_salta(row.get("title"), row.get("summary")))
         caption = captions.assemble(body, captions.build_hashtags(group=group, category=category, salta_related=salta)) if body else ""
         overlay = captions.fix_title(title, max_chars=80)
         return EditorialPackage(
@@ -193,10 +204,23 @@ class EditorialAI:
             # Un video de redes sin IA no tiene contexto verificable suficiente: no se publica solo.
             return self._package(row, relevance, cache_key, prompt, payload or {}, title=str(row.get("title") or ""), body="",
                                  publish=False, reason=f"{reason};video_x_sin_redaccion")
-        body = captions.fallback_body(str(row.get("title") or ""), str(row.get("summary") or ""), str(row.get("body_text") or ""))
+        category, _ = self._tone(payload or {}, relevance)
+        body = captions.fallback_body(str(row.get("title") or ""), str(row.get("summary") or ""), str(row.get("body_text") or ""), category=category)
         visual_payload = {"visual": (payload or {}).get("visual")} if payload and payload.get("visual") else {}
         return self._package(row, relevance, cache_key, prompt, visual_payload, title=captions.fix_title(str(row.get("title") or "")),
                              body=body, publish=True, reason=reason)
+
+    @staticmethod
+    def _tone(payload: Dict[str, Any], relevance: Optional[Dict[str, Any]]) -> Tuple[str, bool]:
+        """Categoria del hecho y si es sensible (policiales/justicia o gravedad >= 6): define emojis."""
+        visual = payload.get("visual") if isinstance(payload.get("visual"), dict) else {}
+        category = str(visual.get("categoria") or (relevance or {}).get("tema") or "")
+        gravedad = ((relevance or {}).get("components") or {}).get("gravedad")
+        try:
+            gravedad = float(gravedad) if gravedad is not None else None
+        except (TypeError, ValueError):
+            gravedad = None
+        return category, captions.is_sensitive(category, gravedad)
 
     def _cached(self, row: Dict[str, Any], cache_key: str) -> Optional[EditorialPackage]:
         if str(row.get("editorial_cache_key") or "") != cache_key:

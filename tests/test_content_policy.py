@@ -1,6 +1,7 @@
 """Politica tecnica: sin listas de temas; solo fuente, validez, vigencia y video obligatorio."""
 from __future__ import annotations
 
+import dataclasses
 import json
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -44,14 +45,46 @@ class ContentPolicyTests(unittest.TestCase):
             self.assertTrue(self.check(row(title=title)).accepted, title)
 
     def test_politician_name_does_not_grant_entry_by_itself(self) -> None:
+        # Sin video, una nacional solo pasa a evaluarse con la exigencia de imagen (relevancia >= 70).
         decision = self.check(row("tn", title="Milei hablo en un acto en Buenos Aires"))
-        self.assertFalse(decision.accepted)
-        self.assertEqual(decision.reason, "sin_video")
+        self.assertTrue(decision.reason.startswith("valida; video=no; imagen_si_relevancia>=70"), decision.reason)
 
-    def test_national_and_paparazzi_require_video(self) -> None:
+    def test_paparazzi_requires_video_and_national_needs_high_relevance_without_it(self) -> None:
+        self.assertEqual(self.check(row("paparazzi")).reason, "sin_video")
+        for source in ("tn", "infobae"):
+            decision = self.check(row(source))
+            self.assertTrue(decision.accepted, source)
+            self.assertIn("imagen_si_relevancia>=70", decision.reason)
         for source in ("tn", "infobae", "paparazzi"):
-            self.assertEqual(self.check(row(source)).reason, "sin_video")
             self.assertTrue(self.check(row(source, video=True)).accepted, source)
+
+    def without_trim(self) -> None:
+        self.policy.config = dataclasses.replace(self.policy.config, trim_long_videos=False)
+
+    def test_long_video_is_eligible_when_trimmed(self) -> None:
+        # Con media.trim_long_videos se publican sus primeros 90 s: el video largo cuenta como video.
+        self.assertTrue(self.policy.config.trim_long_videos)
+        long_video = json.dumps([{"kind": "video", "remote_url": "https://example.test/v.mp4", "duration_seconds": 224.0}])
+        for source in ("paparazzi", "tn"):
+            decision = self.check(row(source, assets_json=long_video))
+            self.assertTrue(decision.accepted, source)
+            self.assertEqual(decision.reason, "valida; video=si")
+
+    def test_long_national_video_falls_back_to_image_rule(self) -> None:
+        self.without_trim()
+        long_video = json.dumps([{"kind": "video", "remote_url": "https://example.test/v.mp4", "duration_seconds": 224.0}])
+        decision = self.check(row("tn", assets_json=long_video))
+        self.assertTrue(decision.accepted)
+        self.assertIn("imagen_si_relevancia>=70", decision.reason)
+
+    def test_declared_video_over_90_seconds_is_not_eligible(self) -> None:
+        self.without_trim()
+        long_video = json.dumps([{"kind": "video", "remote_url": "https://example.test/v.mp4", "duration_seconds": 224.0}])
+        decision = self.check(row("paparazzi", assets_json=long_video))
+        self.assertFalse(decision.accepted)
+        self.assertEqual(decision.reason, "video_mayor_90s")
+        short_video = json.dumps([{"kind": "video", "remote_url": "https://example.test/v.mp4", "duration_seconds": 85.0}])
+        self.assertTrue(self.check(row("paparazzi", assets_json=short_video)).accepted)
 
     def test_local_sources_do_not_require_video(self) -> None:
         for source in ("eltribuno", "informatesalta", "quepasasalta", "gobiernosalta", "policiasalta", "municipalidadsalta"):
@@ -89,3 +122,11 @@ class ContentPolicyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AgencyRoundupTests(unittest.TestCase):
+    def test_date_stamp_titles_are_not_articles(self) -> None:
+        from jobs.content_policy import ContentPolicy
+
+        self.assertTrue(ContentPolicy._is_non_article({"title": "Domingo, 18 de octubre de 2026 (12:00 GMT)"}))
+        self.assertFalse(ContentPolicy._is_non_article({"title": "El domingo 18 de octubre habrá cortes de agua en Salta"}))

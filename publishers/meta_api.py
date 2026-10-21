@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
+import httpx
+
 from storage.models import Asset, FormattedPackage, PublicationRecord
 from storage.settings import PipelineSettings, get_settings
 from utils.http_client import HttpClient
 import utils.instagram_graph_publisher as legacy_ig
+
+LOGGER = logging.getLogger("duo.meta")
 
 
 class MetaGraphPublisher:
@@ -361,12 +366,19 @@ class MetaGraphPublisher:
         if not self._has_permission("pages_read_engagement"):
             return {"errors": {"permission": "Missing configured permission: pages_read_engagement"}}
         fb_token = self._get_fb_publish_token()
-        return self._request(
-            "GET",
-            f"/{post_id}",
-            params={"fields": "id,permalink_url,comments.limit(0).summary(true),likes.limit(0).summary(true)"},
-            access_token=fb_token,
-        )
+        base_fields = "id,permalink_url,shares,comments.limit(0).summary(true),likes.limit(0).summary(true)"
+        # 2026-10-21: sin insights las vistas quedaban en 0. post_impressions ya no existe;
+        # Meta lo reemplazo por post_media_view (vistas) y post_total_media_view_unique (alcance).
+        try:
+            return self._request(
+                "GET",
+                f"/{post_id}",
+                params={"fields": f"{base_fields},insights.metric(post_media_view,post_total_media_view_unique)"},
+                access_token=fb_token,
+            )
+        except Exception:
+            # Algunos ids (videos/reels) no aceptan esos insights: al menos likes y comentarios.
+            return self._request("GET", f"/{post_id}", params={"fields": base_fields}, access_token=fb_token)
 
     def fetch_publication_comments(
         self,
@@ -546,21 +558,27 @@ class MetaGraphPublisher:
             video = next(asset for asset in package.assets if asset.kind == "video")
             upload_mode = os.getenv("IG_REELS_UPLOAD_MODE", "resumable").strip().lower()
             local_video = Path(video.path) if video.path else None
+            extra = self._reel_extras(package)
             if upload_mode != "url" and local_video and local_video.exists():
                 try:
-                    container_id, upload_uri = self._create_reel_resumable_container(package.caption)
+                    container_id, upload_uri = self._with_tags_fallback(
+                        lambda data: self._create_reel_resumable_container(package.caption, data), extra
+                    )
                     self._upload_resumable_video(container_id, local_video, upload_uri)
                 except Exception:
-                    container_id = self._create_reel_url_container(video, package.caption)
+                    container_id = self._with_tags_fallback(lambda data: self._create_reel_url_container(video, package.caption, data), extra)
             else:
-                container_id = self._create_reel_url_container(video, package.caption)
+                container_id = self._with_tags_fallback(lambda data: self._create_reel_url_container(video, package.caption, data), extra)
             self._wait_container(container_id)
             media_id = self._publish_container(container_id)
             return media_id
         if package.post_type == "image":
             image = next(asset for asset in package.assets if asset.kind == "image")
             media_url = self._asset_media_url(image)
-            container_id = self._create_media_container(media_url, "image", caption=package.caption)
+            container_id = self._with_tags_fallback(
+                lambda data: self._create_media_container(media_url, "image", caption=package.caption, extra=data),
+                self._image_tag_extras(package),
+            )
             self._wait_container(container_id)
             media_id = self._publish_container(container_id)
             return media_id
@@ -586,14 +604,22 @@ class MetaGraphPublisher:
     def _publish_carousel(self, package: FormattedPackage) -> str:
         child_ids: List[str] = []
         cleanup_targets: List[str] = []
+        tagged = False
         for asset in package.assets[:10]:
             media_url = self._asset_media_url(asset)
             cleanup_targets.append(asset.path)
-            child_id = self._create_media_container(
-                media_url,
-                asset.kind,
-                media_type="VIDEO" if asset.kind == "video" else "",
-                is_carousel_item=True,
+            # Las etiquetas van en la primera imagen del carrusel.
+            extra = self._image_tag_extras(package) if asset.kind == "image" and not tagged else {}
+            tagged = tagged or bool(extra)
+            child_id = self._with_tags_fallback(
+                lambda data, url=media_url, kind=asset.kind: self._create_media_container(
+                    url,
+                    kind,
+                    media_type="VIDEO" if kind == "video" else "",
+                    is_carousel_item=True,
+                    extra=data,
+                ),
+                extra,
             )
             if asset.kind == "video":
                 self._wait_container(child_id)
@@ -621,8 +647,10 @@ class MetaGraphPublisher:
         caption: str = "",
         media_type: str = "",
         is_carousel_item: bool = False,
+        extra: Dict[str, Any] | None = None,
     ) -> str:
-        data = {"caption": caption} if caption and not is_carousel_item else {}
+        data: Dict[str, Any] = {"caption": caption} if caption and not is_carousel_item else {}
+        data.update(extra or {})
         if kind == "video":
             data["video_url"] = media_url
             data["media_type"] = media_type or "VIDEO"
@@ -642,13 +670,15 @@ class MetaGraphPublisher:
         )
         return str(payload.get("id") or "")
 
-    def _create_reel_resumable_container(self, caption: str) -> tuple[str, str]:
-        data = {
+    def _create_reel_resumable_container(self, caption: str, extra: Dict[str, Any] | None = None) -> tuple[str, str]:
+        data: Dict[str, Any] = {
             "media_type": "REELS",
             "upload_type": "resumable",
             "share_to_feed": "true",
             "thumb_offset": os.getenv("IG_REELS_THUMB_OFFSET_MS", "2000"),
         }
+        # Con portada propia Instagram usa cover_url e ignora thumb_offset.
+        data.update(extra or {})
         if caption:
             data["caption"] = caption
         payload = self._request(
@@ -662,14 +692,74 @@ class MetaGraphPublisher:
             raise RuntimeError(f"Instagram did not return container id: {payload}")
         return container_id, str(payload.get("uri") or "")
 
-    def _create_reel_url_container(self, video: Asset, caption: str) -> str:
+    def _create_reel_url_container(self, video: Asset, caption: str, extra: Dict[str, Any] | None = None) -> str:
         media_url = self._asset_media_url(video)
         return self._create_media_container(
             media_url,
             "video",
             caption=caption,
             media_type="REELS",
+            extra=extra,
         )
+
+    # -- portada y etiquetas ------------------------------------------------------
+
+    @staticmethod
+    def _cover_path(package: FormattedPackage) -> str:
+        cover = str(package.meta.get("cover_path") or "")
+        return cover if cover and Path(cover).is_file() else ""
+
+    @staticmethod
+    def _user_tags(package: FormattedPackage) -> List[str]:
+        return [str(h) for h in (package.meta.get("ig_user_tags") or []) if str(h).strip()][:5]
+
+    def _reel_extras(self, package: FormattedPackage) -> Dict[str, Any]:
+        extra: Dict[str, Any] = {}
+        cover = self._cover_path(package)
+        if cover:
+            try:
+                extra["cover_url"] = legacy_ig._resolve_media_url(cover)
+            except Exception as exc:  # sin portada sale igual, con el cuadro de thumb_offset
+                LOGGER.warning("portada no disponible: %s", str(exc)[:160])
+        tags = self._user_tags(package)
+        if tags:
+            extra["user_tags"] = json.dumps([{"username": handle} for handle in tags])
+        return extra
+
+    def _image_tag_extras(self, package: FormattedPackage) -> Dict[str, Any]:
+        tags = self._user_tags(package)
+        if not tags:
+            return {}
+        # Posiciones repartidas en la franja inferior de la imagen.
+        spots = [0.25, 0.5, 0.75, 0.35, 0.65]
+        return {"user_tags": json.dumps([{"username": h, "x": spots[i], "y": 0.88} for i, h in enumerate(tags)])}
+
+    @staticmethod
+    def _with_tags_fallback(create, extra: Dict[str, Any]):
+        """Si Instagram rechaza una etiqueta (cuenta que no permite etiquetas), se publica sin ellas."""
+        try:
+            return create(extra)
+        except Exception as exc:
+            if "user_tags" not in extra:
+                raise
+            LOGGER.warning("etiquetas rechazadas, se publica sin ellas: %s", str(exc)[:200])
+            return create({k: v for k, v in extra.items() if k != "user_tags"})
+
+    def business_discovery(self, handle: str) -> Dict[str, Any] | None:
+        """Cuenta profesional publica por usuario (None si no existe o no es profesional)."""
+        try:
+            payload = self._request(
+                "GET",
+                f"/{self.settings.ig_user_id}",
+                params={"fields": f"business_discovery.username({handle}){{username,name,followers_count}}"},
+                access_token=self.settings.ig_access_token,
+            )
+        except RuntimeError as exc:
+            if "2207013" in str(exc) or "Invalid user id" in str(exc):
+                return None
+            raise
+        account = payload.get("business_discovery")
+        return account if isinstance(account, dict) else None
 
     def _upload_resumable_video(self, container_id: str, local_path: Path, upload_uri: str = "") -> Dict[str, Any]:
         if not local_path.exists():
@@ -887,6 +977,9 @@ class MetaGraphPublisher:
                 access_token=fb_token,
             )
             note = {"note": "carrusel de video publicado en Facebook como el primer tramo"} if package.post_type == "carousel" else {}
+            thumb = self._set_facebook_thumbnail(str(payload.get("id") or ""), self._cover_path(package), fb_token)
+            if thumb:
+                note = {**note, "thumbnail": thumb}
             return PublicationRecord(
                 platform="facebook",
                 status="published",
@@ -941,6 +1034,25 @@ class MetaGraphPublisher:
             payload={"note": "carousel collapsed to first asset for facebook publish"},
         )
 
+    def _set_facebook_thumbnail(self, video_id: str, cover: str, token: str) -> str:
+        """Portada propia del video en Facebook (no bloquea la publicacion si falla)."""
+        if not (video_id and cover):
+            return ""
+        try:
+            with open(cover, "rb") as handle:
+                response = httpx.post(
+                    f"{self.base_url}/{video_id}/thumbnails",
+                    data={"is_preferred": "true", "access_token": token},
+                    files={"source": (Path(cover).name, handle, "image/jpeg")},
+                    timeout=60,
+                )
+            parsed = response.json()
+            if response.status_code >= 400 or parsed.get("error"):
+                return f"fallo:{str(parsed.get('error') or response.status_code)[:120]}"
+            return "ok"
+        except Exception as exc:
+            return f"fallo:{str(exc)[:120]}"
+
     def _request(
         self,
         method: str,
@@ -981,6 +1093,8 @@ class MetaGraphPublisher:
 
     def cleanup_package_assets(self, package: FormattedPackage) -> None:
         local_paths = [asset.path for asset in package.assets if asset.path]
+        if self._cover_path(package):
+            local_paths.append(self._cover_path(package))
         if not local_paths:
             return
         self._cleanup_assets(package, local_paths)

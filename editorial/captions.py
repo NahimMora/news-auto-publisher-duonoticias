@@ -6,10 +6,14 @@ Todo local, sin IA:
 - corrige titulos en MAYUSCULAS sostenidas y el exceso de signos de exclamacion;
 - verifica que cada cifra del caption figure en el material de origen;
 - arma hashtags moderados (#Salta solo si el hecho es salteno; nunca partidarios);
+- arma el texto final: gancho (primera linea, lo unico visible antes de "mas"),
+  parrafos cortos con emoji, cierre y hashtags; garantiza el emoji inicial y saca
+  emojis frivolos de las notas sensibles;
 - garantiza menos de 2000 caracteres contando emojis, CTA y hashtags.
 """
 from __future__ import annotations
 
+import hashlib
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -56,6 +60,32 @@ CATEGORY_HASHTAGS = {
     "tecnologia": "#Tecnologia",
     "turismo": "#Turismo",
 }
+# Emoji inicial del gancho cuando el modelo no puso uno (y del texto de respaldo sin IA).
+CATEGORY_EMOJI = {
+    "policiales": "🚨",
+    "justicia": "⚖️",
+    "politica": "🏛️",
+    "economia": "💰",
+    "sociedad": "📢",
+    "salud": "🏥",
+    "educacion": "🎓",
+    "deportes": "⚽",
+    "cultura": "🎭",
+    "espectaculos": "🎬",
+    "turismo": "🏔️",
+    "clima": "🌦️",
+    "tecnologia": "📱",
+    "transito": "🚗",
+    "servicios": "💡",
+}
+DEFAULT_EMOJI = "📌"
+# Lo que Instagram muestra antes de "mas" (aprox.): el gancho tiene que entrar entero.
+HOOK_MAX_CHARS = 125
+# Nunca en muertes, violencia, policiales o justicia.
+FRIVOLOUS_EMOJIS = ("😂", "🤣", "😅", "😜", "😎", "🥳", "🎉", "🔥", "😍", "💃", "🙌", "👏", "🤩", "😆", "😁", "🤪", "💥", "🍿")
+SENSITIVE_CATEGORIES = {"policiales", "justicia"}
+MAX_EMOJIS = 9
+
 BLOCKED_HASHTAGS = {"#milei2027", "#kirchnerismo", "#antik", "#libertarios", "#peronismo"}
 
 
@@ -187,9 +217,84 @@ def check_caption(caption: str, *, source_text: str) -> CaptionCheck:
     return CaptionCheck(caption=caption, issues=issues)
 
 
-def fallback_body(title: str, summary: str, body_text: str, *, max_chars: int = 900) -> str:
+def _is_emoji_char(ch: str) -> bool:
+    return unicodedata.category(ch) == "So" or 0x1F000 <= ord(ch) <= 0x1FAFF
+
+
+def starts_with_emoji(line: str) -> bool:
+    stripped = line.lstrip()
+    return bool(stripped) and _is_emoji_char(stripped[0])
+
+
+def lead_emoji(category: str) -> str:
+    return CATEGORY_EMOJI.get(_ascii(category), DEFAULT_EMOJI)
+
+
+def is_sensitive(category: str, gravedad: Optional[float] = None) -> bool:
+    return _ascii(category) in SENSITIVE_CATEGORIES or (gravedad is not None and gravedad >= 6)
+
+
+def clean_emojis(text: str, *, sensitive: bool) -> str:
+    """Saca los emojis frivolos en notas sensibles y corta el exceso (deja los primeros)."""
+    if sensitive:
+        for emoji in FRIVOLOUS_EMOJIS:
+            text = text.replace(emoji, "")
+    seen = 0
+    out = []
+    for ch in text:
+        if _is_emoji_char(ch):
+            seen += 1
+            if seen > MAX_EMOJIS:
+                continue
+        out.append(ch)
+    text = "".join(out)
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    return "\n".join(line.strip() for line in text.splitlines()).strip()
+
+
+def compose_body(payload: dict, *, category: str, sensitive: bool) -> str:
+    """Gancho + parrafos + cierre (formato nuevo); si el modelo devolvio un "caption" plano, ese."""
+    hook = re.sub(r"\s+", " ", str(payload.get("gancho") or "")).strip()
+    paragraphs = payload.get("cuerpo")
+    if isinstance(paragraphs, str):
+        paragraphs = [p for p in paragraphs.split("\n\n")]
+    parts = [str(p).strip() for p in (paragraphs or []) if str(p or "").strip()]
+    closing = str(payload.get("cierre") or "").strip()
+    if not hook and not parts:
+        plain = str(payload.get("caption") or "").strip()
+        if not plain:
+            return ""
+        lines = plain.split("\n\n")
+        hook, parts = lines[0].strip(), [x.strip() for x in lines[1:] if x.strip()]
+    if hook and not starts_with_emoji(hook):
+        hook = f"{lead_emoji(category)} {hook}"
+    blocks = [hook] + parts + ([closing] if closing else [])
+    return clean_emojis("\n\n".join(b for b in blocks if b), sensitive=sensitive)
+
+
+def apply_hook_variant(payload: dict, content_key: str) -> dict:
+    """Prueba A/B de ganchos: la mitad de las notas (segun su clave) sale con ``gancho_b``.
+
+    Instagram no permite dos versiones del mismo post: se alternan dos angulos en notas
+    comparables y el reporte compara las vistas. Queda registrado en ``variante_gancho``.
+    """
+    if payload.get("variante_gancho"):
+        return payload
+    alternative = re.sub(r"\s+", " ", str(payload.get("gancho_b") or "")).strip()
+    use_b = bool(alternative) and len(alternative) <= HOOK_MAX_CHARS and int(hashlib.sha1(content_key.encode("utf-8")).hexdigest(), 16) % 2 == 1
+    if not use_b:
+        return {**payload, "variante_gancho": "A"}
+    return {**payload, "gancho_a": payload.get("gancho"), "gancho": alternative, "variante_gancho": "B"}
+
+
+def hook_issues(body: str) -> List[str]:
+    first = (body or "").split("\n", 1)[0]
+    return [f"gancho_largo:{len(first)}"] if len(first) > HOOK_MAX_CHARS else []
+
+
+def fallback_body(title: str, summary: str, body_text: str, *, max_chars: int = 900, category: str = "") -> str:
     """Sin IA: solo texto de la fuente (titulo + bajada + primeros parrafos), nada inventado."""
-    parts = [fix_title(title, max_chars=220)]
+    parts = [f"{lead_emoji(category)} {fix_title(title, max_chars=220)}"]
     if summary and _ascii(summary)[:60] != _ascii(title)[:60]:
         parts.append(summary.strip())
     cleaned = [_PUNCT_SPACE_RE.sub(lambda m: m.group(1), p.strip()) for p in str(body_text or "").splitlines() if len(p.strip()) > 40]

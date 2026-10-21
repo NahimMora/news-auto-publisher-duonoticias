@@ -301,3 +301,33 @@ class ExtractorParsingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CaptionCompositionTests(unittest.TestCase):
+    def test_hook_first_with_emoji_then_paragraphs_and_closing(self) -> None:
+        body = captions.compose_body(
+            {"gancho": "Cortan la ruta 9 por el desborde del río", "cuerpo": ["📍 A la altura de La Caldera.", "🕐 Desde las 7."], "cierre": "🔁 Compartilo"},
+            category="transito",
+            sensitive=False,
+        )
+        lines = body.split("\n\n")
+        self.assertTrue(lines[0].startswith("🚗 "))
+        self.assertEqual(lines[1:], ["📍 A la altura de La Caldera.", "🕐 Desde las 7.", "🔁 Compartilo"])
+
+    def test_sensitive_news_lose_frivolous_emojis(self) -> None:
+        body = captions.compose_body({"gancho": "🚨 Murió un motociclista 😂", "cuerpo": ["🔥 Fue en avenida Bolivia."]}, category="policiales", sensitive=True)
+        self.assertNotIn("😂", body)
+        self.assertNotIn("🔥", body)
+        self.assertTrue(body.startswith("🚨 Murió"))
+
+    def test_plain_caption_from_older_payload_still_works(self) -> None:
+        body = captions.compose_body({"caption": "Primera linea\n\nSegundo parrafo"}, category="", sensitive=False)
+        self.assertTrue(body.startswith("📌 Primera linea"))
+
+    def test_long_hook_is_reported(self) -> None:
+        self.assertEqual(captions.hook_issues("x" * 130 + "\n\ncuerpo"), ["gancho_largo:130"])
+        self.assertEqual(captions.hook_issues("corto\n\ncuerpo"), [])
+
+    def test_fallback_text_starts_with_category_emoji(self) -> None:
+        body = captions.fallback_body("Corte de luz en el centro", "", "", category="servicios")
+        self.assertTrue(body.startswith("💡 "))

@@ -65,11 +65,13 @@ export const contentSchema = z.object({
   editorialStatus: editorialStatusSchema.default("draft"),
   /** Marca visible en piezas de demostracion. */
   isDemo: z.boolean().default(false),
+  /** Datos de los formatos de servicio, resumen e historias (board, story, weekly). */
+  extra: z.record(z.string(), z.unknown()).optional(),
 });
 
 // ---------- Presentacion ----------
 
-export const templateIds = ["breaking", "editorial", "data", "static"] as const;
+export const templateIds = ["breaking", "editorial", "data", "static", "video", "cover", "board", "story", "weekly"] as const;
 export const hookIds = ["auto", "typographic", "photo", "data"] as const;
 export const formatIds = ["reel", "portrait", "square"] as const;
 export const staticVariantIds = ["auto", "hero", "split", "type"] as const;

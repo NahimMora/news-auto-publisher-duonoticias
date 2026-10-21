@@ -1,4 +1,4 @@
-"""Recorte mecanico de video y armado de piezas (sin reels de foto animada)."""
+"""Reel = video completo (tope 90 s), portada, fotos sin repetir y sin reels de foto animada."""
 from __future__ import annotations
 
 import json
@@ -10,10 +10,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from formatter.service import AssetFormatter
+import cv2
+import numpy as np
+
+from formatter.service import AssetFormatter, image_dhash
 from storage.settings import get_settings
 from utils.media_resolver import MediaResolver, VideoUnavailable, probe_video
-from utils.video_clips import ClipSpec, cut_segment, plan_clips
 
 FFMPEG = shutil.which("ffmpeg")
 
@@ -27,22 +29,45 @@ def make_video(path: Path, seconds: float, *, audio: bool = True, size: str = "3
     return path
 
 
-class ClipPlanTests(unittest.TestCase):
-    def test_video_of_40_seconds_is_used_whole(self) -> None:
-        self.assertEqual(plan_clips(40.0), [ClipSpec(0, 0.0, 40.0)])
+class PhotoDedupTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="duo_photos_"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        def scene(seed: int) -> np.ndarray:
+            rng = np.random.default_rng(seed)
+            image = np.zeros((360, 640, 3), np.uint8)
+            for _ in range(12):
+                x, y = int(rng.integers(0, 600)), int(rng.integers(0, 330))
+                color = tuple(int(c) for c in rng.integers(0, 255, 3))
+                cv2.rectangle(image, (x, y), (x + int(rng.integers(40, 200)), y + int(rng.integers(30, 160))), color, -1)
+            return image
 
-    def test_video_of_90_seconds_gives_0_60_and_remaining(self) -> None:
-        self.assertEqual(plan_clips(90.0), [ClipSpec(0, 0.0, 60.0), ClipSpec(1, 60.0, 30.0)])
+        base = scene(7)
+        cv2.imwrite(str(self.tmp / "a.jpg"), base)
+        # La misma foto en otro tamano y formato (lo que mandaba El Tribuno como webp + jpg).
+        cv2.imwrite(str(self.tmp / "a_small.png"), cv2.resize(base, (320, 180), interpolation=cv2.INTER_AREA))
+        cv2.imwrite(str(self.tmp / "b.jpg"), scene(11))
 
-    def test_long_video_uses_first_two_minutes_only(self) -> None:
-        # 23 minutos: 00:00-01:00 y 01:00-02:00; nunca tramos del medio.
-        self.assertEqual(plan_clips(23 * 60.0), [ClipSpec(0, 0.0, 60.0), ClipSpec(1, 60.0, 60.0)])
+    def test_same_photo_in_other_format_is_dropped(self) -> None:
+        formatter = AssetFormatter.__new__(AssetFormatter)
+        paths = [str(self.tmp / "a.jpg"), str(self.tmp / "a_small.png"), str(self.tmp / "b.jpg")]
+        unique = formatter._usable_photos("k", paths, row={"source": "informatesalta"})
+        self.assertEqual(unique, [paths[0], paths[2]])
 
-    def test_tiny_remainder_is_not_a_second_clip(self) -> None:
-        self.assertEqual(plan_clips(62.0), [ClipSpec(0, 0.0, 60.0)])
+    def test_same_photo_with_other_crop_is_dropped(self) -> None:
+        base = cv2.imread(str(self.tmp / "a.jpg"))
+        noise = (np.random.default_rng(3).random(base.shape) * 60).astype(np.uint8)
+        textured = cv2.add(base, noise)
+        cv2.imwrite(str(self.tmp / "t.jpg"), textured)
+        cv2.imwrite(str(self.tmp / "t_crop.jpg"), textured[20:330, :])  # 16:9 del mismo original
+        formatter = AssetFormatter.__new__(AssetFormatter)
+        paths = [str(self.tmp / "t.jpg"), str(self.tmp / "t_crop.jpg"), str(self.tmp / "b.jpg")]
+        self.assertEqual(formatter._usable_photos("k", paths, row={"source": "informatesalta"}), [paths[0], paths[2]])
 
-    def test_no_duration_no_clips(self) -> None:
-        self.assertEqual(plan_clips(0), [])
+    def test_dhash_is_stable_across_sizes(self) -> None:
+        a = image_dhash(str(self.tmp / "a.jpg"))
+        b = image_dhash(str(self.tmp / "a_small.png"))
+        self.assertLessEqual(bin(a ^ b).count("1"), 6)
 
 
 @unittest.skipUnless(FFMPEG, "ffmpeg no instalado")
@@ -74,11 +99,6 @@ class VideoPieceTests(unittest.TestCase):
         shutil.copy(segment, output)
         return str(output)
 
-    def test_cut_segment_is_exact(self) -> None:
-        source = make_video(self.tmp / "v90.mp4", 90)
-        out = cut_segment(str(source), str(self.tmp / "c2.mp4"), ClipSpec(1, 60.0, 30.0))
-        self.assertAlmostEqual(probe_video(out)["duration"], 30.0, delta=0.6)
-
     def test_40_second_video_is_one_reel(self) -> None:
         source = make_video(self.tmp / "v40.mp4", 40)
         with patch("formatter.service.process_video_for_instagram", side_effect=self._legacy_render):
@@ -86,24 +106,22 @@ class VideoPieceTests(unittest.TestCase):
         self.assertEqual(package.post_type, "reel")
         self.assertEqual(len(package.assets), 1)
         self.assertEqual(package.caption, "Caption canonico")
+        self.assertTrue(package.thumbnail_path and Path(package.thumbnail_path).exists())
 
-    def test_90_second_video_is_two_clip_carousel(self) -> None:
-        source = make_video(self.tmp / "v90.mp4", 90)
+    def test_90_second_video_is_one_whole_reel(self) -> None:
+        source = make_video(self.tmp / "v90.mp4", 90, size="160x284")
         with patch("formatter.service.process_video_for_instagram", side_effect=self._legacy_render):
             package = self.formatter.format_row(self._row(source, 90.0))
-        self.assertEqual(package.post_type, "carousel")
-        self.assertEqual([a.kind for a in package.assets], ["video", "video"])
-        durations = [probe_video(a.path)["duration"] for a in package.assets]
-        self.assertAlmostEqual(durations[0], 60.0, delta=0.6)
-        self.assertAlmostEqual(durations[1], 30.0, delta=0.6)
-        self.assertEqual(package.meta["clips"], [{"start": 0.0, "end": 60.0}, {"start": 60.0, "end": 90.0}])
-        self.assertEqual(package.meta["facebook_video_index"], 0)
+        self.assertEqual(package.post_type, "reel")
+        self.assertEqual([a.kind for a in package.assets], ["video"])
+        self.assertAlmostEqual(probe_video(package.assets[0].path)["duration"], 90.0, delta=0.6)
+        self.assertNotIn("clips", package.meta)
 
-    def test_several_minutes_video_uses_0_60_and_60_120(self) -> None:
-        source = make_video(self.tmp / "v200.mp4", 200, size="160x284")
+    def test_video_longer_than_90_seconds_is_not_used(self) -> None:
+        source = make_video(self.tmp / "v120.mp4", 120, size="160x284")
         with patch("formatter.service.process_video_for_instagram", side_effect=self._legacy_render):
-            package = self.formatter.format_row(self._row(source, 200.0))
-        self.assertEqual(package.meta["clips"], [{"start": 0.0, "end": 60.0}, {"start": 60.0, "end": 120.0}])
+            with self.assertRaisesRegex(RuntimeError, "supera el tope"):
+                self.formatter.format_row(self._row(source, 120.0))
 
     def test_article_without_video_never_becomes_a_reel(self) -> None:
         row = {
@@ -165,6 +183,62 @@ class MediaResolverTests(unittest.TestCase):
                 self.resolver.resolve("https://example.test/bogus.mp4", "mp4")
         self.assertEqual(ctx.exception.reason, "unsupported_format")
 
+    def test_video_longer_than_reel_limit_is_rejected_and_cached(self) -> None:
+        source = make_video(self.tmp / "long.mp4", 95, size="160x284")
+        with patch.object(self.resolver, "_download_mp4", side_effect=lambda url, target: shutil.copy(source, target)):
+            with self.assertRaises(VideoUnavailable) as ctx:
+                self.resolver.resolve("https://example.test/long.mp4", "mp4")
+        self.assertEqual(ctx.exception.reason, "too_long")
+        with patch.object(self.resolver, "_download_mp4") as again:
+            with self.assertRaises(VideoUnavailable):
+                self.resolver.resolve("https://example.test/long.mp4", "mp4")
+            again.assert_not_called()
+
+    def test_declared_long_duration_skips_download(self) -> None:
+        from storage.models import Asset
+
+        asset = Asset(kind="video", remote_url="https://example.test/v.mp4", duration_seconds=224.0, meta={"video_kind": "mp4"})
+        with patch.object(self.resolver, "_download_mp4") as download:
+            with self.assertRaises(VideoUnavailable) as ctx:
+                self.resolver.resolve_asset(asset)
+        self.assertEqual(ctx.exception.reason, "too_long")
+        download.assert_not_called()
+
+    def test_long_video_is_trimmed_to_first_seconds_when_enabled(self) -> None:
+        resolver = MediaResolver(self.tmp / "cache_trim", min_seconds=5, max_seconds=10, trim_long=True)
+        source = make_video(self.tmp / "long_trim.mp4", 16, size="160x284")
+        with patch.object(resolver, "_download_mp4", side_effect=lambda url, target: shutil.copy(source, target)) as download:
+            first = resolver.resolve("https://example.test/long_trim.mp4", "mp4")
+            second = resolver.resolve("https://example.test/long_trim.mp4", "mp4")
+        self.assertTrue(first.trimmed)
+        self.assertLessEqual(first.duration_seconds, 10.5)
+        self.assertGreaterEqual(first.duration_seconds, 9.0)
+        self.assertTrue(Path(first.path).is_relative_to(self.tmp / "cache_trim"))
+        # La cache guarda el tramo recortado: el segundo ciclo no vuelve a bajar ni a recortar.
+        self.assertEqual(download.call_count, 1)
+        self.assertTrue(second.cache_hit)
+        self.assertFalse(second.trimmed)
+
+    def test_declared_long_duration_is_downloaded_when_trimming(self) -> None:
+        from storage.models import Asset
+
+        resolver = MediaResolver(self.tmp / "cache_trim2", min_seconds=5, max_seconds=10, trim_long=True)
+        source = make_video(self.tmp / "declared.mp4", 14, size="160x284")
+        asset = Asset(kind="video", remote_url="https://example.test/d.mp4", duration_seconds=224.0, meta={"video_kind": "mp4"})
+        with patch.object(resolver, "_download_mp4", side_effect=lambda url, target: shutil.copy(source, target)):
+            resolved = resolver.resolve_asset(asset)
+        self.assertTrue(resolved.trimmed)
+        self.assertLessEqual(resolved.duration_seconds, 10.5)
+
+    def test_cached_too_long_is_retried_when_trimming(self) -> None:
+        source = make_video(self.tmp / "retry.mp4", 14, size="160x284")
+        with patch.object(MediaResolver, "_download_mp4", side_effect=lambda url, target: shutil.copy(source, target)):
+            strict = MediaResolver(self.tmp / "cache_retry", min_seconds=5, max_seconds=10)
+            with self.assertRaises(VideoUnavailable):
+                strict.resolve("https://example.test/retry.mp4", "mp4")
+            trimming = MediaResolver(self.tmp / "cache_retry", min_seconds=5, max_seconds=10, trim_long=True)
+            self.assertTrue(trimming.resolve("https://example.test/retry.mp4", "mp4").trimmed)
+
     def test_valid_video_is_cached(self) -> None:
         source = make_video(self.tmp / "ok.mp4", 8)
         with patch.object(self.resolver, "_download_mp4", side_effect=lambda url, target: shutil.copy(source, target)) as download:
@@ -177,3 +251,31 @@ class MediaResolverTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PlaceholderImageTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="duo_placeholder_"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def test_flat_logo_card_is_placeholder(self) -> None:
+        from formatter.service import is_placeholder_image
+
+        card = np.full((630, 1200, 3), (0, 140, 255), np.uint8)
+        cv2.putText(card, "infobae", (250, 360), cv2.FONT_HERSHEY_SIMPLEX, 6, (255, 255, 255), 18)
+        cv2.imwrite(str(self.tmp / "card.png"), card)
+        self.assertTrue(is_placeholder_image(str(self.tmp / "card.png")))
+
+    def test_real_scene_is_not_placeholder(self) -> None:
+        from formatter.service import is_placeholder_image
+
+        rng = np.random.default_rng(3)
+        scene = cv2.GaussianBlur((rng.random((400, 600, 3)) * 255).astype(np.uint8), (9, 9), 0)
+        cv2.imwrite(str(self.tmp / "scene.jpg"), scene)
+        self.assertFalse(is_placeholder_image(str(self.tmp / "scene.jpg")))
+
+    def test_placeholder_urls(self) -> None:
+        from formatter.service import is_placeholder_image
+
+        self.assertTrue(is_placeholder_image("", "https://www.infobae.com/assets/images/logos/fallback-promo-image-1200x630.png"))
+        self.assertFalse(is_placeholder_image("", "https://cdn.example.com/2026/10/catalogo-de-ofertas.jpg"))

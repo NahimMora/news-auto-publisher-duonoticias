@@ -29,6 +29,9 @@ class SourceSpec:
     enabled: bool = True
     official: bool = False
     requires_video: bool = False
+    # Con requires_video: sin video usable la nota igual puede salir como imagen si su relevancia
+    # llega a este puntaje (TN e Infobae: solo lo muy relevante).
+    image_min_score: Optional[float] = None
     watermark_policy: str = ""
     max_items_per_scan: int = 10
     feeds: Tuple[str, ...] = ()
@@ -53,9 +56,7 @@ class EditorialConfig:
     thresholds: Dict[str, float]
     batch_size: int
     max_chars_per_item: int
-    clip_seconds: float
-    max_clips: int
-    min_clip_seconds: float
+    max_reel_seconds: float
     min_video_seconds: float
     max_download_mb: float
     interval_minutes: float
@@ -65,6 +66,30 @@ class EditorialConfig:
     rate_input_per_million: Optional[float]
     rate_output_per_million: Optional[float]
     model_rates: Dict[str, Tuple[float, float]] = field(default_factory=dict)
+    # Cupo de Instagram (100 por API cada 24 h): reserva para formatos y fraccion maxima por ciclo.
+    ig_reserve_for_formats: int = 15
+    # Video mas largo que max_reel_seconds: se usan sus primeros segundos en vez de descartarlo.
+    trim_long_videos: bool = False
+    # Tope de noticias por ciclo segun la hora local (ver quotas.ig_news_per_hour).
+    ig_news_night_hours: Tuple[int, ...] = (1, 2, 3, 4, 5, 6)
+    ig_news_per_hour_night: int = 1
+    ig_news_per_hour_day: int = 3
+    ig_news_peak_hours: Tuple[int, ...] = ()
+    ig_news_per_hour_peak: int = 0
+    # Feed de Instagram separado de Facebook (2026-10-21): tope diario de noticias en el feed de IG;
+    # lo que no entra sale solo en Facebook. 0 = IG y FB llevan las mismas notas (comportamiento anterior).
+    ig_feed_per_day: int = 0
+    # Puntos extra al ordenar quien entra al feed de IG si la nota tiene video (reel).
+    ig_feed_video_bonus: float = 0.0
+    # Prueba del limite de Instagram: ignora el cupo restante y la reserva (ver quotas.ig_quota_probe).
+    ig_quota_probe: bool = False
+
+    def news_cap_for_hour(self, hour: int) -> int:
+        if hour in self.ig_news_night_hours:
+            return self.ig_news_per_hour_night
+        if hour in self.ig_news_peak_hours:
+            return self.ig_news_per_hour_peak
+        return self.ig_news_per_hour_day
 
     # -- fuentes ------------------------------------------------------------
 
@@ -89,6 +114,11 @@ class EditorialConfig:
     def requires_video(self, source: object) -> bool:
         spec = self.source(source)
         return bool(spec and spec.requires_video)
+
+    def image_min_score(self, source: object) -> Optional[float]:
+        """Puntaje con el que una fuente de video obligatorio puede publicar con imagen (None = nunca)."""
+        spec = self.source(source)
+        return spec.image_min_score if spec and spec.requires_video else None
 
     def is_official(self, source: object) -> bool:
         spec = self.source(source)
@@ -155,6 +185,7 @@ def _sources(settings: PipelineSettings) -> Dict[str, SourceSpec]:
             enabled=item.get("enabled") is not False,
             official=bool(item.get("official")),
             requires_video=bool(item.get("requires_video")),
+            image_min_score=float(item["image_min_score"]) if item.get("image_min_score") not in (None, "") else None,
             watermark_policy=str(item.get("watermark_policy") or ""),
             max_items_per_scan=int(item.get("max_items_per_scan") or 10),
             feeds=tuple(str(feed) for feed in (item.get("feeds") or []) if feed),
@@ -189,6 +220,15 @@ def load_editorial_config(settings: PipelineSettings) -> EditorialConfig:
         free_eligible_groups=tuple(quotas.get("free_eligible_groups") or ("local", "paparazzi", "x_feed")),
         max_per_source_per_cycle=int(quotas.get("max_per_source_per_cycle") or 3),
         max_pieces_per_day=int(quotas.get("max_pieces_per_day") or 0),
+        ig_reserve_for_formats=int(quotas.get("ig_reserve_for_formats", 15) or 0),
+        ig_news_night_hours=tuple(int(h) for h in (_section(quotas, "ig_news_per_hour").get("night_hours") or (1, 2, 3, 4, 5, 6))),
+        ig_news_per_hour_night=int(_section(quotas, "ig_news_per_hour").get("night", 1)),
+        ig_news_per_hour_day=int(_section(quotas, "ig_news_per_hour").get("day", 3)),
+        ig_news_peak_hours=tuple(int(h) for h in (_section(quotas, "ig_news_per_hour").get("peak_hours") or ())),
+        ig_news_per_hour_peak=int(_section(quotas, "ig_news_per_hour").get("peak", _section(quotas, "ig_news_per_hour").get("day", 3))),
+        ig_feed_per_day=int(_section(quotas, "ig_feed").get("per_day", 0) or 0),
+        ig_feed_video_bonus=float(_section(quotas, "ig_feed").get("video_bonus", 0) or 0),
+        ig_quota_probe=bool(quotas.get("ig_quota_probe", False)),
         pending_ttl_hours=float(queue.get("pending_ttl_hours") or 12),
         max_retries=int(queue.get("max_retries") or 3),
         max_content_age_hours=ages,
@@ -197,11 +237,10 @@ def load_editorial_config(settings: PipelineSettings) -> EditorialConfig:
         thresholds=thresholds,
         batch_size=max(1, int(relevance.get("batch_size") or 12)),
         max_chars_per_item=max(200, int(relevance.get("max_chars_per_item") or 700)),
-        clip_seconds=float(media.get("clip_seconds") or 60),
-        max_clips=max(1, int(media.get("max_clips") or 2)),
-        min_clip_seconds=float(media.get("min_clip_seconds") or 5),
+        max_reel_seconds=float(media.get("max_reel_seconds") or 90),
         min_video_seconds=float(media.get("min_video_seconds") or 5),
         max_download_mb=float(media.get("max_download_mb") or 400),
+        trim_long_videos=bool(media.get("trim_long_videos", False)),
         interval_minutes=float(cycle.get("interval_minutes") or 60),
         align_minute=int(cycle.get("align_minute") or 0),
         production_budget_minutes=float(cycle.get("production_budget_minutes") or 45),

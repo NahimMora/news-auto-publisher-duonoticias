@@ -49,7 +49,8 @@ vuelven a bajar notas ya procesadas.
    un hecho por ciclo, tope por fuente, limite de publicacion de Instagram.
 10. Produccion de lo elegido: `utils/media_resolver.py` (descarga verificada con cache, primeros 123 s),
     franja de Informate / marca de agua en video, `editorial/service.py` (caption canonico con cache),
-    `formatter/service.py` (reel o carrusel de dos tramos con el motor `motion/`; posts estaticos).
+    `formatter/service.py` (reel con el video completo, tope 90 s, plantilla `video` del motor `motion/` + portada 9:16
+    apta para el recorte 4:5 del feed; posts estaticos sin fotos repetidas ni con marca de agua).
 11. Validacion (`_formatted_publish_block_reason`): archivos reales, duraciones, caption < 2000.
 12. Publicacion IG + FB con el mismo paquete; resultado por plataforma; idempotencia por plataforma.
 13. Registro: `queue_events`, `llm_usage`, `cycles`, `web_articles` (preparado, sin publicar).
@@ -68,11 +69,15 @@ Tablas nuevas: `news_events`, `queue_events`, `llm_usage`, `cycles`, `web_articl
 
 ## Publicacion
 
-- `publishers/meta_api.py`: IG reel / imagen / carrusel (incluye carrusel de 2 videos); FB recibe el mismo
+- `publishers/meta_api.py`: IG reel (con `cover_url` y `user_tags`) / imagen / carrusel; FB recibe el mismo
   caption. FB no publica carruseles de video por API: va el primer tramo como video.
 - Idempotencia: `in_flight` antes de cada llamada; reconciliacion por caption exacto; `ambiguous` si no
   se puede verificar.
 - Limites de tasa compartidos: `publishers/rate_limits.py`.
+- Etiquetas: `publishers/ig_tags.py` + `config/instagram_tags.yaml` (cuentas curadas o verificadas con
+  `business_discovery`; nunca particulares; en policiales/justicia solo instituciones). FB no lleva etiquetas.
+- Musica: la API no permite canciones de la biblioteca de Instagram; opcional `DUO_REEL_MUSIC_PATH`
+  (archivo con licencia) como fondo a bajo volumen.
 - Web futura: `publishers/web_prep.py` arma `web_articles`; la entrega (`publishers/duo_web.py`) sigue apagada.
 
 ## Produccion

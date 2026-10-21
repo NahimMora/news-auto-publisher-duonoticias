@@ -7,6 +7,8 @@
 #   x_feed    -> videos de X del intercambio de HolaSalta (cupos libres, o locales si el hecho es salteno)
 #
 # requires_video: la nota se descarta si no tiene un video real utilizable (sin reel de foto).
+# image_min_score: con requires_video, sin video usable igual sale como IMAGEN si la relevancia llega a
+#   este puntaje (decision 2026-10-18: nacionales muy relevantes se publican aunque no tengan video).
 # watermark_policy: "discard" descarta la nota si el recurso principal trae una marca de agua
 #   detectada; "informate_band" recorta la franja azul inferior de Informate Salta.
 # official: comunicados oficiales; solo pasan los de alto interes ciudadano (umbral propio).
@@ -100,6 +102,7 @@ sources:
       - https://tn.com.ar/rss.xml
     max_items_per_scan: 30
     requires_video: true
+    image_min_score: 70
 
   - name: infobae
     display_name: Infobae
@@ -112,6 +115,8 @@ sources:
       - https://www.infobae.com/arc/outboundfeeds/rss/
     # El feed mezcla ediciones de otros paises: solo secciones argentinas o de alcance general.
     exclude_path_prefixes:
+      # Resumenes horarios de agencias (EFE/AFP): no son notas.
+      - /america/agencias/
       - /mexico/
       - /peru/
       - /colombia/
@@ -129,6 +134,7 @@ sources:
       - /ecuador/
     max_items_per_scan: 40
     requires_video: true
+    image_min_score: 70
 
   # --- VIDEOS DE X (solo el intercambio autorizado de HolaSalta, sin scraping de cuentas) ---
   - name: x

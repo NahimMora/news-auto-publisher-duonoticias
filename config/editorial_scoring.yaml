@@ -27,6 +27,36 @@ quotas:
   # Tope diario de piezas (0 = sin tope propio). Instagram limita la publicacion por API
   # (content_publishing_limit, 24 h moviles); el publicador lo consulta antes de cada ciclo.
   max_pieces_per_day: 0
+  # Instagram: 100 publicaciones por API cada 24 h moviles, contando historias. Las noticias dejan
+  # libres estas para historias y formatos (resumen de las 8, dolar, top semanal).
+  ig_reserve_for_formats: 15
+  # Tope de noticias por ciclo segun la hora local (2026-10-20). Como el cupo de Instagram es de
+  # 24 h moviles, lo que se publica a una hora vuelve a estar libre recien a la misma hora del dia
+  # siguiente: un tope fijo por hora mantiene el ritmo parejo. Antes (un cuarto de lo que quedaba)
+  # la noche se llevaba 4-6 por hora y la tarde siguiente quedaba sin lugar.
+  # 6 h x 1 + 18 h x 3 = 60 noticias por dia; las historias y formatos usan unas 27.
+  # 2026-10-20: el propietario pidio 10 por ciclo a toda hora para probar si el limite de 100 es real
+  # (prueba documentada en docs/PRUEBA_CUPO_INSTAGRAM.md). Ritmo parejo de antes: night 1, day 3.
+  # 2026-10-21: prueba terminada (sin rechazos, el uso nunca paso de 90/100; ver docs/PRUEBA_CUPO_INSTAGRAM.md).
+  # Con ~85 publicaciones por dia el alcance subio pero las bajas de seguidores pasaron de ~15 a ~90 por dia:
+  # el feed de IG lleva ahora solo las mejores notas (ver ig_feed); el resto sale solo en Facebook.
+  # Madrugada sin noticias en el feed; 2 por ciclo en horas pico; 1 el resto.
+  ig_news_per_hour:
+    night_hours: [1, 2, 3, 4, 5, 6]
+    night: 0
+    peak_hours: [12, 13, 20, 21, 22]
+    peak: 2
+    day: 1
+  # Prueba del limite: no frenar por el cupo que informa la API ni por la reserva para formatos.
+  # Si Instagram rechaza, la nota sale igual en Facebook e Instagram queda en pausa (rate_limits).
+  # Cada ciclo deja el cupo antes y despues en data/reports/ig_limit_probe.jsonl.
+  ig_quota_probe: false
+  # Feed de Instagram separado de Facebook (docs/ESTRATEGIA_AUDIENCIA.md). per_day: tope de noticias
+  # en el feed de IG por dia local; video_bonus: puntos extra para que entren antes las notas con
+  # video (los reels rinden 5-10 veces mas que las imagenes). per_day: 0 vuelve a IG = FB.
+  ig_feed:
+    per_day: 20
+    video_bonus: 10
 
 queue:
   # Una candidata puede esperar como maximo esto desde su primer ingreso elegible.
@@ -79,8 +109,11 @@ relevance:
     sin_relacion_salta: 25
   # Puntaje minimo para entrar a la cola (no se rellenan cupos con material flojo).
   thresholds:
-    local: 55
-    local_official: 65
+    # Recalibrado 2026-10-18 con 119 notas locales de 24 h: con 55 pasaban 26 por dia y quedaban
+    # afuera notas publicables de 45-55 (accidente en El Carril, fiestas clandestinas, suba de
+    # alimentos, Central Norte, litio). Con 45 pasan ~39.
+    local: 45
+    local_official: 58
     # Calibrado 2026-10-18 (13 notas con video, 3 reevaluaciones): el hecho nacional grave del
     # dia promedio 73.9 (rango 66-76.5); lo siguiente promedio 41.6 o menos.
     national: 60
@@ -93,18 +126,18 @@ relevance:
   max_chars_per_item: 700
 
 media:
-  # Recorte mecanico: hasta 60 s se usa el video entero; si es mas largo, dos tramos
-  # cronologicos desde el inicio (0-60 y 60-120). Nunca se buscan otros fragmentos.
-  clip_seconds: 60
-  max_clips: 2
-  min_clip_seconds: 5
+  # Reel = un unico tramo de video, nunca carruseles de partes (decision 2026-10-18).
+  max_reel_seconds: 90
+  # Video mas largo que max_reel_seconds: se publican sus primeros 90 s (decision 2026-10-20).
+  # En false, no se usa: la nota local sigue con imagen y Paparazzi, TN e Infobae se descartan.
+  trim_long_videos: true
   # Un video mas corto que esto no es un video de la nota (previews animados de 2 s).
   min_video_seconds: 5
   max_download_mb: 400
 
 llm:
   # Version de los prompts: cambia la clave de cache de captions y evaluaciones.
-  prompt_version: duo-2026-10-v1
+  prompt_version: duo-2026-10-v4
   # Tarifas estandar por millon de tokens (USD), por modelo, para estimar costos con tokens reales.
   # Fuente: https://ai.google.dev/gemini-api/docs/pricing (consultado 2026-10-18). Modelo sin
   # tarifa = costo no estimado. El respaldo ante 503 es GEMINI_FALLBACK_MODEL (3.5-flash-lite).

@@ -17,6 +17,8 @@ import time
 from dataclasses import dataclass, field, replace
 from typing import Any, Dict, Optional, Tuple
 
+import httpx
+
 from utils.http_client import HttpClient
 
 GEMINI_DEFAULT_MODEL = "gemini-3.1-flash-lite"
@@ -186,7 +188,12 @@ def _post(url: str, headers: Dict[str, str], payload: Dict[str, Any], timeout: f
         block_statuses=set(),
     )
     try:
-        response = client.post(url, json=payload)
+        try:
+            response = client.post(url, json=payload)
+        except httpx.RequestError as exc:
+            # 2026-10-21: un ReadTimeout de Gemini tumbo el ciclo de las 14 h entero. Como LLMError,
+            # quien llama degrada (la nota queda pendiente) en vez de abortar el ciclo.
+            raise LLMError(f"red: {type(exc).__name__}: {exc}") from exc
         if response.status_code >= 400:
             # Body only: the URL and headers never carry the key for Gemini, but stay out of messages anyway.
             raise LLMError(f"HTTP {response.status_code}: {response.text[:300]}")

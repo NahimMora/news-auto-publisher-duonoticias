@@ -69,8 +69,13 @@ def normalize_metrics(raw_metrics: Dict[str, Any], platform: str) -> Dict[str, f
         )
         shares = _coerce_number((details.get("shares") or {}).get("count"))
         saved = 0.0
-        views = _coerce_number(details.get("views"))
-        reach = _coerce_number(details.get("reach"))
+        fb_insights = {
+            str(item.get("name")): [item]
+            for item in ((details.get("insights") or {}).get("data") or [])
+            if isinstance(item, dict)
+        }
+        views = _coerce_number(details.get("views")) or _first_insight_value(fb_insights, "post_media_view")
+        reach = _coerce_number(details.get("reach")) or _first_insight_value(fb_insights, "post_total_media_view_unique")
         impressions = _coerce_number(details.get("impressions"))
     denominator = max(views, reach, impressions, 1.0)
     engagement_rate = round(((likes + comments + shares) / denominator) * 100.0, 4)

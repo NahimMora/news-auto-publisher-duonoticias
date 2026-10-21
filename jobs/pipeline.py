@@ -40,7 +40,7 @@ from editorial.service import EditorialAI
 from extractors.registry import SourceRegistry
 from extractors.x.service import XExtractionService, XImportError, tweet_id_from_url
 from extractors.x_video_feed import XVideoFeed
-from formatter.service import AssetFormatter
+from formatter.service import AssetFormatter, NoRealPhoto, WatermarkBlocked
 from growth.feedback import GrowthFeedbackService
 from growth.reporting import DailyReportService
 from growth.source_ranking import SourceRankingService
@@ -57,6 +57,7 @@ from jobs.events import (
 )
 from jobs.relevance import RelevanceEvaluator, fair_order
 from publishers.duo_web import DUO_WEB_PLATFORM, build_duo_web_publisher
+from publishers.ig_tags import InstagramTagResolver
 from publishers.meta_api import MetaGraphPublisher
 from publishers.rate_limits import RateLimitRegistry, is_rate_limit_error
 from publishers.web_prep import build_web_article
@@ -65,13 +66,13 @@ from storage.models import Asset, ExtractedContent, FormattedPackage, Publicatio
 from storage.settings import PipelineSettings, get_settings
 from storage.sqlite_store import PipelineStore
 from utils.media_resolver import MediaResolver, VideoUnavailable
-from utils.watermark import check_image, check_video, handle_informate_band
+from utils.watermark import SOURCE_BRANDS, check_image, check_video, handle_informate_band
 
 # Ventana para buscar el mismo acontecimiento entre notas recientes.
 EVENT_WINDOW_HOURS = 72
 # Notas nuevas evaluadas por ciclo como maximo (intercaladas por fuente).
 MAX_RELEVANCE_PER_CYCLE = 150
-WATERMARK_BRANDS = {"eltribuno": ["eltribuno"], "quepasasalta": ["quepasasalta"]}
+WATERMARK_BRANDS = SOURCE_BRANDS
 
 
 def cycle_id_for(moment: datetime, zone: ZoneInfo) -> str:
@@ -105,12 +106,18 @@ class DuoPipeline:
             ffprobe=self.settings.ffprobe_path,
             min_seconds=self.config.min_video_seconds,
             max_download_mb=self.config.max_download_mb,
-            max_seconds=self.config.clip_seconds * self.config.max_clips + 3,
+            max_seconds=self.config.max_reel_seconds,
+            trim_long=self.config.trim_long_videos,
         )
         self.rate_limits = RateLimitRegistry(
             Path(os.getenv("DUO_RATE_LIMITS_PATH") or (self.settings.data_dir / "runtime" / "meta_rate_limits.json"))
         )
         self.publisher = MetaGraphPublisher(self.settings)
+        self.ig_tags = InstagramTagResolver(
+            self.settings.base_dir / "config" / "instagram_tags.yaml",
+            self.settings.data_dir / "runtime" / "ig_handles.json",
+            lookup=self._lookup_instagram_account,
+        )
         self.duo_web = build_duo_web_publisher(self.settings)
         self.analytics = AnalyticsCollector(self.store, self.publisher, self.settings)
         self.growth = GrowthFeedbackService(self.store, self.settings)
@@ -164,9 +171,14 @@ class DuoPipeline:
             ingest = self.run_scraper(max_news=max_news, dry_run=not publish_enabled, cycle_id=cycle_id, now=now)
             for key, value in ingest.items():
                 summary[key] = summary.get(key, 0) + value
-        evaluated = self._evaluate_pending(cycle_id, now=now)
+        try:
+            evaluated = self._evaluate_pending(cycle_id, now=now)
+        except Exception as exc:  # la relevancia caida no frena la cola ya puntuada ni los formatos
+            self.logger.exception("Relevancia fallida en %s: %s", cycle_id, exc)
+            evaluated = {"relevance_error": 1}
         for key, value in evaluated.items():
             summary[key] = summary.get(key, 0) + value
+        probe_before = self._ig_quota_snapshot() if publish_enabled and self.config.ig_quota_probe else None
         plan = self._allocate(cycle_id, now=now, publish_enabled=publish_enabled)
         summary["selected"] = len(plan.selected)
         summary["allocation"] = {"usage": plan.usage, "waiting": len(plan.waiting)}
@@ -190,6 +202,9 @@ class DuoPipeline:
             summary["analytics"] = self.run_analytics()
             summary["comment_actions"] = self.run_comment_engagement()
             summary["daily_reports"] = self._maybe_build_daily_report()
+            summary["formats"] = self.run_formats(summary, now=now)
+        if probe_before is not None:
+            summary["ig_probe"] = self._record_ig_probe(cycle_id, probe_before, summary)
         summary["queue"] = self.store.queue_counts()
         summary["seconds"] = round(time.monotonic() - started, 1)
         self.store.finish_cycle(cycle_id, {k: v for k, v in summary.items() if k != "decisions"})
@@ -247,12 +262,25 @@ class DuoPipeline:
                 rows = self.source_registry.scan_source(source, max_items=max_news, known=self.store.known_url)
             except Exception as exc:  # una fuente caida no frena al resto
                 self.logger.exception("Extractor %s fallo: %s", source, exc)
+                self._record_scraper(source, ok=False, detail=f"{type(exc).__name__}: {exc}", dry_run=dry_run)
                 continue
+            self._record_scraper(source, ok=True, items=len(rows), dry_run=dry_run)
             for key, value in self._ingest_rows(rows, now=now).items():
                 totals[key] += value
         for key, value in self._import_x_video_feed(dry_run=dry_run, now=now).items():
             totals[key] += value
         return totals
+
+    def _record_scraper(self, source: str, *, ok: bool, items: int = 0, detail: str = "", dry_run: bool = False) -> None:
+        """Estado de cada scraper para los avisos del vigilante (``formats/alerts.py``); nunca frena el ciclo."""
+        if dry_run:
+            return
+        try:
+            from formats.store import FormatsStore
+
+            FormatsStore(self.settings.sqlite_path).save_scraper_result(source, ok=ok, items=items, detail=detail)
+        except Exception as exc:
+            self.logger.warning("no se pudo registrar el estado del scraper %s: %s", source, exc)
 
     def scan_source(self, source: str, *, max_items: int | None = None) -> int:
         return self._ingest_rows(self.source_registry.scan_source(source, max_items=max_items, known=self.store.known_url))["ingested"]
@@ -464,6 +492,9 @@ class DuoPipeline:
     def _enqueue(self, row: Dict[str, Any], payload: Dict[str, Any], *, now: datetime, totals: Dict[str, int]) -> Dict[str, int]:
         key = str(row["content_key"])
         threshold = self.config.threshold_for(row.get("source"), row.get("source_type"))
+        if self._image_only_candidate(row):
+            # Fuente de video obligatorio sin video usable: solo entra si es muy relevante (sale con imagen).
+            threshold = max(threshold, float(self.config.image_min_score(row.get("source")) or threshold))
         score = float(payload.get("score") or 0.0)
         flags = payload.get("flags") or {}
         if str(row.get("source_type") or "") == "x_video" and flags.get("contexto_suficiente") is False:
@@ -514,21 +545,104 @@ class DuoPipeline:
         plan = allocate(candidates, self.config, used=used, capacity_left=self._capacity_left(now, publish_enabled), blocked_events=blocked_events)
         for item in plan.selected:
             self.store.transition(item["content_key"], "selected", plan.reasons.get(item["content_key"], ""), cycle_id=cycle_id, assigned_slot=item["slot"])
+        if self.config.ig_feed_per_day > 0:
+            self._assign_ig_feed(plan, {c.content_key: c.score for c in candidates}, now=now, publish_enabled=publish_enabled)
         return plan
+
+    def _assign_ig_feed(self, plan, scores: Dict[str, float], *, now: datetime, publish_enabled: bool) -> None:
+        """Feed de IG separado (2026-10-21): solo las mejores del ciclo van al feed de Instagram.
+
+        El volumen alto (unas 85 publicaciones por dia) subio el alcance pero llevo las bajas de
+        seguidores de ~15 a ~90 por dia. Las demas notas salen solo en Facebook.
+        """
+        slots = self._ig_feed_slots(now, publish_enabled)
+        ranked = []
+        for item in plan.selected:
+            row = self.store.find_content(item["content_key"]) or {}
+            has_video = any(a.kind == "video" for a in self._assets(row)) if row else False
+            ranked.append((scores.get(item["content_key"], 0.0) + (self.config.ig_feed_video_bonus if has_video else 0.0), row))
+        ranked.sort(key=lambda pair: -pair[0])
+        for index, (_, row) in enumerate(ranked):
+            if row:
+                self._update_eligibility(row, {"ig_feed": index < slots})
+
+    def _ig_feed_slots(self, now: datetime, publish_enabled: bool) -> int:
+        local = now.astimezone(self.zone)
+        slots = self.config.news_cap_for_hour(local.hour)
+        midnight = local.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc).isoformat()
+        with self.store.connection() as conn:
+            row = conn.execute(
+                "SELECT COUNT(DISTINCT content_key) FROM publications WHERE platform = 'instagram' AND status = 'published' AND COALESCE(published_at, updated_at) >= ?",
+                (midnight,),
+            ).fetchone()
+        slots = min(slots, max(0, self.config.ig_feed_per_day - int(row[0] or 0)))
+        if publish_enabled and self.settings.enable_instagram and not self.config.ig_quota_probe:
+            try:
+                remaining = self.publisher.get_ig_publish_limit().get("remaining")
+                if isinstance(remaining, int):
+                    slots = min(slots, max(0, remaining - self.config.ig_reserve_for_formats))
+            except Exception as exc:
+                self.logger.warning("No se pudo leer el limite de publicacion de Instagram: %s", exc)
+        return slots
 
     def _capacity_left(self, now: datetime, publish_enabled: bool) -> Optional[int]:
         caps: List[int] = []
         if self.config.max_pieces_per_day > 0:
             midnight = now.astimezone(self.zone).replace(hour=0, minute=0, second=0, microsecond=0)
             caps.append(max(0, self.config.max_pieces_per_day - self.store.pieces_published_since(midnight.astimezone(timezone.utc).isoformat())))
-        if publish_enabled and self.settings.enable_instagram:
+        if publish_enabled and self.settings.enable_instagram and self.config.ig_feed_per_day <= 0:
+            # Con feed de IG separado el cupo de Instagram no frena a Facebook (ver _assign_ig_feed).
+            if self.config.ig_quota_probe:
+                caps.append(self.config.news_cap_for_hour(now.astimezone(self.zone).hour))
+                return min(caps)
             try:
                 remaining = self.publisher.get_ig_publish_limit().get("remaining")
                 if isinstance(remaining, int):
-                    caps.append(max(0, remaining))
+                    for_news = max(0, remaining - self.config.ig_reserve_for_formats)
+                    # Ritmo: tope fijo por hora local (el cupo es de 24 h moviles; ver quotas.ig_news_per_hour).
+                    caps.append(min(for_news, self.config.news_cap_for_hour(now.astimezone(self.zone).hour)))
             except Exception as exc:
                 self.logger.warning("No se pudo leer el limite de publicacion de Instagram: %s", exc)
         return min(caps) if caps else None
+
+    def _ig_quota_snapshot(self) -> Dict[str, Any]:
+        try:
+            return {"at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(), **(self.publisher.get_ig_publish_limit() or {})}
+        except Exception as exc:
+            return {"at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(), "error": str(exc)[:300]}
+
+    def _record_ig_probe(self, cycle_id: str, before: Dict[str, Any], summary: Dict[str, Any]) -> Dict[str, Any]:
+        """Prueba del limite de Instagram: cupo antes/despues del ciclo y cada rechazo, en un jsonl."""
+        after = self._ig_quota_snapshot()
+        since = str(before.get("at") or "")
+        with self.store.connection() as conn:
+            rows = conn.execute(
+                "SELECT status, COUNT(*) n FROM publications WHERE platform = 'instagram' AND created_at >= ? GROUP BY status", (since,)
+            ).fetchall()
+            errors = conn.execute(
+                "SELECT substr(error_message, 1, 300) e FROM publications WHERE platform = 'instagram' AND created_at >= ? AND status != 'published'", (since,)
+            ).fetchall()
+            stories = conn.execute(
+                "SELECT status, COUNT(*) n FROM format_publications WHERE platform = 'instagram' AND created_at >= ? GROUP BY status", (since,)
+            ).fetchall()
+        record = {
+            "cycle_id": cycle_id,
+            "before": before,
+            "after": after,
+            "news_instagram": {r["status"]: r["n"] for r in rows},
+            "formats_instagram": {r["status"]: r["n"] for r in stories},
+            "instagram_errors": [r["e"] for r in errors if r["e"]],
+            "instagram_blocked": self.rate_limits.snapshot().get("instagram"),
+            "published_cycle": summary.get("published"),
+        }
+        try:
+            path = self.settings.data_dir / "reports" / "ig_limit_probe.jsonl"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+        except OSError as exc:
+            self.logger.warning("no se pudo escribir la prueba del cupo de Instagram: %s", exc)
+        return {"before": before.get("quota_usage"), "after": after.get("quota_usage"), "errors": len(record["instagram_errors"])}
 
     # -- 10-12) produccion y publicacion ---------------------------------------------
 
@@ -560,6 +674,7 @@ class DuoPipeline:
                 self.store.transition(content_key, "queued" if not publish_enabled else "editorialized", "simulacion:sin_render", cycle_id="" if not publish_enabled else cycle_id)
                 return {**outcome, "status": "ready", "post_type": package.post_type, "caption": editorial.caption, "simulated": True}
             package = self._reuse_or_format(row)
+            package.meta["ig_user_tags"] = self._instagram_tags(row)
             self.store.save_formatted(content_key, package)
             block = self._formatted_publish_block_reason(self.store.find_content(content_key) or row)
             if block:
@@ -574,6 +689,11 @@ class DuoPipeline:
                 return {**outcome, "status": "ready", "post_type": package.post_type, "caption": package.caption, "assets": [a.path for a in package.assets]}
             published = self._publish_row(self.store.find_content(content_key) or row, cycle_id)
             return {**outcome, "status": "published" if published else "pending_platforms", "post_type": package.post_type}
+        except (WatermarkBlocked, NoRealPhoto) as exc:
+            # Todas las fotos tienen marca de otro medio: no se publica; pasa la siguiente version del hecho.
+            self.store.transition(content_key, "discarded", str(exc)[:300])
+            self._promote_alternative(row)
+            return {**outcome, "status": "discarded", "reason": str(exc)[:300]}
         except Exception as exc:
             self.logger.exception("Produccion fallida %s: %s", content_key, exc)
             retries = int(row.get("retry_count") or 0) + 1
@@ -622,17 +742,29 @@ class DuoPipeline:
                 if verdict.blocks:
                     return {"discard": f"{verdict.reason}:video:score={verdict.score}", "review": verdict.status == "ambiguous"}
             media = {"video": {"path": path, "duration_seconds": resolved.duration_seconds, "kind": resolved.kind,
-                               "width": resolved.width, "height": resolved.height, "has_audio": resolved.has_audio},
+                               "width": resolved.width, "height": resolved.height, "has_audio": resolved.has_audio,
+                               "trimmed": resolved.trimmed},
                      "video_text": resolved.text, "failures": failures}
             self._save_media(key, media)
             return media
-        if requires_video:
+        if requires_video and not self._image_allowed(row):
             return {"discard": "video_inutilizable:" + (",".join(failures) or "sin_video")}
         media = {"video": None, "failures": failures, "fallback": "imagen" if failures else ""}
         if failures and spec and spec.watermark_policy == "discard" and self._image_watermark_blocks(row):
             return {"discard": "marca_de_agua_en_imagen_alternativa"}
         self._save_media(key, media)
         return media
+
+    def _image_only_candidate(self, row: Dict[str, Any]) -> bool:
+        """Fuente con video obligatorio e image_min_score, y la nota no trae un video usable declarado."""
+        if self.config.image_min_score(row.get("source")) is None or str(row.get("source_type") or "") == "x_video":
+            return False
+        return not self.content_policy._has_video_asset(row) or self.content_policy._declared_video_too_long(row)
+
+    def _image_allowed(self, row: Dict[str, Any]) -> bool:
+        """Sin video usable, una nota de TN/Infobae sale con imagen solo si su relevancia llega al minimo."""
+        minimum = self.config.image_min_score(row.get("source"))
+        return minimum is not None and str(row.get("source_type") or "") != "x_video" and float(row.get("relevance_score") or 0) >= minimum
 
     def _save_media(self, content_key: str, media: Dict[str, Any]) -> None:
         with self.store.connection() as conn:
@@ -648,6 +780,24 @@ class DuoPipeline:
             if package.caption == current_caption and package.assets and all(a.path and Path(a.path).exists() for a in package.assets):
                 return package
         return self.formatter.format_row(row, dry_run=False)
+
+    def _lookup_instagram_account(self, handle: str) -> Optional[Dict[str, Any]]:
+        if not (self.settings.ig_access_token and self.settings.ig_user_id):
+            raise RuntimeError("sin credenciales de Instagram")
+        return self.publisher.business_discovery(handle)
+
+    def _instagram_tags(self, row: Dict[str, Any]) -> List[str]:
+        """Cuentas verificadas de las personas publicas / instituciones de la nota (nunca falla la pieza)."""
+        try:
+            editorial = self._load_json(row.get("editorial_json"))
+            raw = editorial.get("raw_response") if isinstance(editorial.get("raw_response"), dict) else {}
+            visual = raw.get("visual") if isinstance(raw.get("visual"), dict) else {}
+            text = " ".join(str(row.get(k) or "") for k in ("title", "summary", "body_text"))
+            category = str(visual.get("categoria") or editorial.get("angle") or "")
+            return self.ig_tags.resolve(text=text, personas=raw.get("personas") or [], category=category)
+        except Exception as exc:
+            self.logger.warning("ig_tags %s: %s", row.get("content_key"), exc)
+            return []
 
     def _promote_alternative(self, row: Dict[str, Any]) -> None:
         """Si la version elegida de un hecho no sirvio (sin video, marca de agua), pasa la siguiente."""
@@ -665,7 +815,7 @@ class DuoPipeline:
 
     def _publish_row(self, row: Dict[str, Any], cycle_id: str) -> bool:
         content_key = str(row["content_key"])
-        target_platforms = self._enabled_publish_platforms()
+        target_platforms = self._target_platforms(row)
         if not target_platforms:
             return False
         statuses = self.store.publication_statuses(content_key)
@@ -803,7 +953,7 @@ class DuoPipeline:
             else:
                 self.store.resolve_publication(content_key, platform, status="failed", error_message="interrumpida_antes_de_publicar")
                 summary["failed"] += 1
-            self.store.refresh_content_publish_state(content_key, self._enabled_publish_platforms())
+            self.store.refresh_content_publish_state(content_key, self._target_platforms(self.store.find_content(content_key) or {}))
             self.store.defer_publish(content_key, "reintento_tras_interrupcion")
         return {k: v for k, v in summary.items() if v}
 
@@ -849,6 +999,13 @@ class DuoPipeline:
             platforms.append("facebook")
         if self.settings.enable_duo_web and self.duo_web is not None:
             platforms.append(DUO_WEB_PLATFORM)
+        return platforms
+
+    def _target_platforms(self, row: Dict[str, Any]) -> List[str]:
+        """Redes de una nota: las habilitadas, sin Instagram si quedo fuera del feed de IG."""
+        platforms = self._enabled_publish_platforms()
+        if self._load_json(row.get("eligibility_json")).get("ig_feed") is False:
+            platforms = [p for p in platforms if p != "instagram"]
         return platforms
 
     @staticmethod
@@ -907,6 +1064,20 @@ class DuoPipeline:
             if title_fp and other and title_fp == other:
                 return True
         return False
+
+    def run_formats(self, summary: Dict[str, Any], *, now: datetime | None = None) -> Dict[str, Any]:
+        """Historias, resumen de las 8, servicio, actualizaciones, top semanal, comentarios y reporte
+        (``formats/runner.py``). Aislado: una falla de un formato nunca frena el ciclo de noticias."""
+        if not isinstance(self.publisher, MetaGraphPublisher) or os.getenv("DUO_FORMATS_ENABLED", "true").strip().lower() in {"0", "false", "no"}:
+            return {}  # tests con publicador falso o formatos apagados
+        try:
+            from formats.runner import FormatsRunner, published_keys_from
+
+            runner = FormatsRunner(self.settings, self.publisher, usage_sink=self.store.record_llm_usage)
+            return runner.run(now=now, published_keys=published_keys_from(summary), publish_enabled=True)
+        except Exception as exc:
+            self.logger.exception("formatos: %s", exc)
+            return {"error": str(exc)[:200]}
 
     def run_analytics(self) -> int:
         return len(self.analytics.collect_due_snapshots())

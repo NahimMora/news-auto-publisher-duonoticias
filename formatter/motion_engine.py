@@ -9,7 +9,8 @@ Reglas editoriales que se aplican aca, antes de llegar al render:
 - El titular audiovisual sale del editorial (Gemini) o del titulo original;
   nunca se completa con texto inventado.
 - Las cifras solo pasan si el numero figura literalmente en la nota.
-- Los puntos clave deben compartir la mayoria de sus palabras con la nota.
+- Los puntos clave ("Que se sabe") deben compartir la mayoria de sus palabras con
+  la nota y ser cortos (<= 80 caracteres): uno largo se descarta, no se trunca.
 """
 from __future__ import annotations
 
@@ -85,6 +86,10 @@ class MotionConfig:
     max_reel_seconds: int
     render_timeout_seconds: int
     inbox: bool
+    # Musica de fondo opcional para reels: archivo local con licencia de uso (la API de Instagram
+    # no permite agregar canciones de su biblioteca). Vacio = sin musica.
+    music_path: str = ""
+    music_volume: float = 0.12
 
     @classmethod
     def from_env(cls, base_dir: Path) -> "MotionConfig":
@@ -98,6 +103,8 @@ class MotionConfig:
             max_reel_seconds=int(os.getenv("DUO_MOTION_MAX_REEL_SECONDS", "180")),
             render_timeout_seconds=int(os.getenv("DUO_MOTION_TIMEOUT_SECONDS", "300")),
             inbox=flag("DUO_MOTION_INBOX", "1"),
+            music_path=os.getenv("DUO_REEL_MUSIC_PATH", "").strip(),
+            music_volume=float(os.getenv("DUO_REEL_MUSIC_VOLUME", "0.12") or 0.12),
         )
 
 
@@ -294,16 +301,19 @@ def validate_stats(stats: Iterable[Dict[str, Any]], source_text: str) -> List[Di
     return out[:4]
 
 
+HIGHLIGHT_MAX_CHARS = 80
+
+
 def validate_highlights(items: Iterable[Any], source_text: str) -> List[str]:
-    """Puntos clave anclados en la nota (>= 60% de palabras significativas presentes)."""
+    """Puntos "Que se sabe": cortos y anclados en la nota (>= 60% de palabras significativas presentes)."""
     source_words = set(re.findall(r"[a-z0-9ñ]{4,}", _norm(source_text)))
     out: List[str] = []
     for item in items or []:
-        text = _clean(item, 110)
+        text = _clean(item).rstrip(".")
         words = re.findall(r"[a-z0-9ñ]{4,}", _norm(text))
-        if len(text) < 12 or not words:
+        if len(text) < 12 or len(text) > HIGHLIGHT_MAX_CHARS or not words:
             continue
-        if sum(1 for w in words if w in source_words) / len(words) >= 0.6:
+        if sum(1 for w in words if w in source_words) / len(words) >= 0.6 and text not in out:
             out.append(text)
     return out[:3]
 
@@ -358,7 +368,7 @@ def extract_visual(
         category=category,
         location=location,
         breaking=breaking,
-        highlights=validate_highlights(visual.get("claves") or [], source_text),
+        highlights=validate_highlights(raw.get("que_se_sabe") or visual.get("claves") or [], source_text),
         stats=validate_stats(visual.get("cifras") or [], source_text),
     )
 
@@ -505,11 +515,19 @@ class MotionEngine:
                 "theme": "light",
             },
         }
+        if self.config.music_path and Path(self.config.music_path).is_file():
+            piece["presentation"]["audio"] = {"src": self.config.music_path, "volume": max(0.0, min(1.0, self.config.music_volume))}
         # Render de video: ~3x tiempo real en esta PC; el timeout escala con la duracion.
         timeout = max(self.config.render_timeout_seconds, seconds * 8 + 90)
         result = self.worker.render(piece, out_path, "mp4", timeout=timeout)
         self.write_inbox(content_key, piece)
         return {"path": result.get("out") or str(out_path), "piece": piece, "ms": result.get("ms")}
+
+    def render_cover(self, content_key: str, content: Dict[str, Any], out_path: Path) -> Dict[str, Any]:
+        """Portada 9:16 del reel (plantilla "cover"): lo importante queda dentro del recorte 4:5."""
+        piece = {"content": {**content, "videos": []}, "presentation": {"template": "cover", "format": "reel", "theme": "light"}}
+        result = self.worker.render(piece, out_path, "jpeg")
+        return {"path": result.get("out") or str(out_path), "piece": piece}
 
     def render_post(
         self,

@@ -46,6 +46,46 @@ export const templateMeta: Record<TemplateId, TemplateMeta> = {
     formats: ["portrait", "square", "reel"],
     defaultSeconds: 5,
   },
+  video: {
+    id: "video",
+    label: "Video News",
+    description: "Reel de video real: titular fijo, video completo sin fondo desenfocado y \"Qué se sabe\" rotando.",
+    still: false,
+    formats: ["reel"],
+    defaultSeconds: 30,
+  },
+  cover: {
+    id: "cover",
+    label: "Portada de video",
+    description: "Portada 9:16 del reel con todo lo importante dentro del recorte 4:5 del feed.",
+    still: true,
+    formats: ["reel"],
+    defaultSeconds: 5,
+  },
+  board: {
+    id: "board",
+    label: "Tablero de servicio",
+    description: "Resumen de las 8, clima SMN, dólar, feriados y servicios (agua, luz, pasos) con datos oficiales.",
+    still: true,
+    formats: ["portrait", "reel"],
+    defaultSeconds: 5,
+  },
+  story: {
+    id: "story",
+    label: "Historia",
+    description: "Historia 9:16: post nuevo, último momento, lo más importante del día y actualizaciones.",
+    still: true,
+    formats: ["reel"],
+    defaultSeconds: 5,
+  },
+  weekly: {
+    id: "weekly",
+    label: "Top 5 de la semana",
+    description: "Reel de los domingos: cuenta regresiva de las 5 notas más vistas de la semana.",
+    still: false,
+    formats: ["reel"],
+    defaultSeconds: 24,
+  },
 };
 
 export const isStillTemplate = (id: TemplateId) => templateMeta[id]?.still ?? false;

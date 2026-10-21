@@ -132,6 +132,13 @@ def _add_legacy_aliases(subparsers: argparse._SubParsersAction[argparse.Argument
     report.add_argument("--date", dest="report_date", default=None)
     report.add_argument("--no-write", action="store_true")
 
+    formats = subparsers.add_parser("formats", help="Formatos (historias, resumen, servicio, top semanal...): vista previa o publicacion ahora")
+    formats.add_argument("--step", action="append", required=True, help="weather_story, weather_alert_post, digest, services, holidays, dollar, recap, weekly, comments, report")
+    formats.add_argument("--live", action="store_true", help="Publicar de verdad (solo FERNANDO); sin esto solo renderiza en data/formats/preview")
+    ops = subparsers.add_parser("ops-report", help="Reporte de operaciones por correo")
+    ops.add_argument("--send", action="store_true", help="Generar y enviar ahora")
+    ops.add_argument("--watchdog", action="store_true", help="Avisar si el servicio no late y enviar el reporte si esta vencido")
+
 
 def main(argv: List[str] | None = None) -> None:
     _configure_console_encoding()
@@ -154,6 +161,34 @@ def main(argv: List[str] | None = None) -> None:
         return
     if command == "run-24-7":
         _run_247(pipeline, args)
+        return
+    if command == "formats":
+        from formats.runner import STEPS, run_steps
+
+        unknown = [s for s in args.step if s not in STEPS]
+        if unknown:
+            raise SystemExit(f"formatos desconocidos: {unknown}; opciones: {', '.join(STEPS)}")
+        live = bool(args.live)
+        if live and not (is_production_machine() and settings.live_publish_enabled):
+            raise SystemExit("--live solo en FERNANDO con DUO_LIVE_PUBLISH_ENABLED=true")
+        _print_json(run_steps(settings, pipeline.publisher, args.step, live=live, usage_sink=pipeline.store.record_llm_usage))
+        return
+    if command == "ops-report":
+        from datetime import datetime as _dt
+
+        from formats.report import OpsReport
+        from formats.runner import load_config
+        from formats.store import FormatsStore
+
+        reporter = OpsReport(settings, pipeline.publisher, FormatsStore(settings.sqlite_path), load_config(settings.base_dir).get("report") or {},
+                             usage_sink=pipeline.store.record_llm_usage)
+        now = _dt.now().astimezone()
+        if args.watchdog:
+            _print_json(reporter.watchdog(now))
+        elif args.send:
+            _print_json(reporter.send(now))
+        else:
+            _print_json({"due": reporter.due(now), "recipient": reporter.recipient})
         return
     if command in {"scan-sources", "run-scraper"}:
         _print_json(pipeline.run_scraper(max_news=getattr(args, "max_items", None) or getattr(args, "max_news", None), dry_run=True))

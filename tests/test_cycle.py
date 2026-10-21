@@ -127,7 +127,8 @@ class CycleTests(unittest.TestCase):
         self.addCleanup(env.stop)
         get_settings.cache_clear()
         self.addCleanup(get_settings.cache_clear)
-        self.settings = replace(get_settings(), live_publish_enabled=True, enable_duo_web=False)
+        # data_dir temporal: el ciclo escribe reportes (ig_limit_probe.jsonl) que no deben ir a los reales.
+        self.settings = replace(get_settings(), live_publish_enabled=True, enable_duo_web=False, data_dir=self.tmp)
         self.llm = FakeLLM()
         self.batches: List[List[ExtractedContent]] = []
         self.publisher = FakePublisher()
@@ -149,6 +150,8 @@ class CycleTests(unittest.TestCase):
     def _pipeline(self) -> DuoPipeline:
         pipeline = DuoPipeline(self.settings, relevance_call=self.llm.relevance, editorial_call=self.llm.caption, media_resolver=FakeMedia(self.tmp))
         pipeline.publisher = self.publisher
+        # Estos escenarios prueban los cupos por grupo: el ritmo horario de Instagram se prueba en test_ig_pacing.
+        pipeline.config = replace(pipeline.config, ig_news_per_hour_night=10, ig_news_per_hour_day=10, ig_news_peak_hours=(), ig_feed_per_day=0)
         pipeline._download_image = self._download_image  # type: ignore[assignment]
         pipeline.formatter.format_row = self._format  # type: ignore[assignment]
         pipeline.source_registry.scan_source = self._scan  # type: ignore[assignment]
@@ -232,11 +235,17 @@ class CycleTests(unittest.TestCase):
         summary = self.pipeline.run_cycle(live=True)
         self.assertEqual(summary["published"], 1)
 
-    def test_national_without_video_never_reaches_gemini(self) -> None:
-        self.batches.append([note("tn", "Debate en el Congreso por el presupuesto [s95]"), note("paparazzi", "Foto de un famoso en la playa [s95]")])
+    def test_paparazzi_without_video_never_reaches_gemini(self) -> None:
+        self.batches.append([note("paparazzi", "Foto de un famoso en la playa [s95]")])
         self.pipeline.run_cycle(live=True)
         self.assertEqual(self.llm.relevance_calls, 0)
-        self.assertEqual(self._status("Congreso"), "discarded")
+        self.assertEqual(self._status("famoso en la playa"), "discarded")
+
+    def test_national_without_video_is_published_as_image_only_if_very_relevant(self) -> None:
+        self.batches.append([note("tn", "Debate en el Congreso por el presupuesto [s95]"), note("infobae", "Cambios en el calendario escolar nacional [s65]")])
+        self.pipeline.run_cycle(live=True)
+        self.assertEqual(self._status("Congreso"), "published")
+        self.assertEqual(self._status("calendario escolar"), "discarded")
 
     def test_watermark_discards_before_relevance(self) -> None:
         item = note("eltribuno", "Entrevista con una vecina de Rosario de Lerma [s90]")
@@ -310,6 +319,28 @@ class CycleTests(unittest.TestCase):
         self.assertEqual(platforms.count("instagram"), 1)
         self.assertEqual(platforms.count("facebook"), 2)
         self.assertEqual(self._status("procesion"), "published")
+
+    def test_split_feed_sends_only_the_best_to_instagram(self) -> None:
+        # Feed de IG separado: 2 lugares en el feed; el video suma puntos y entra antes que una imagen mas puntuada.
+        self.pipeline.config = replace(self.pipeline.config, ig_feed_per_day=20, ig_news_per_hour_day=2, ig_news_per_hour_night=2, ig_feed_video_bonus=10)
+        self.batches.append([
+            note("informatesalta", "Corte de agua en zona norte [s85]"),
+            note("eltribuno", "Paro de colectivos de SAETA el lunes [s80]"),
+            note("informatesalta", "Nuevo horario en hospitales de Oran [s60]"),
+            note("paparazzi", "Lali grabo un video en Salta [s78]", video=True),
+        ])
+        summary = self.pipeline.run_cycle(live=True)
+        self.assertEqual(summary["published"], 4)
+        instagram = {key for platform, key, _ in self.publisher.calls if platform == "instagram"}
+        facebook = {key for platform, key, _ in self.publisher.calls if platform == "facebook"}
+        self.assertEqual(len(facebook), 4)
+        self.assertEqual(len(instagram), 2)
+        with self.pipeline.store.connection() as conn:
+            titles = {r["content_key"]: r["title"] for r in conn.execute("SELECT content_key, title FROM content_items")}
+        ig_titles = " ".join(titles[k] for k in instagram)
+        self.assertIn("Lali", ig_titles)
+        self.assertIn("Corte de agua", ig_titles)
+        self.assertEqual(self._status("Oran"), "published")  # salio solo en Facebook
 
     def test_x_video_without_context_is_not_published(self) -> None:
         self.batches.append([note("x", "Video [s80] [sinctx]", video=True, body="Mira esto")])

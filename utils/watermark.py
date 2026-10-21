@@ -53,11 +53,19 @@ class BrandProfile:
 
 
 BRANDS: Dict[str, BrandProfile] = {
-    # El Tribuno estampa el logo a ~66 % del ancho, centrado. Positivos 26-32, negativos <= 14.5.
-    "eltribuno": BrandProfile("eltribuno", "eltribuno_mask.png", 0.50, 0.85, 40, 20.0, 0.70, 17.0, 0.68),
-    # Que Pasa Salta varia el tamano (25-45 % del ancho). Positivos: score >= 25 y frac >= 0.81.
-    "quepasasalta": BrandProfile("quepasasalta", "quepasasalta_text_mask.png", 0.25, 0.75, 60, 24.0, 0.78, 21.0, 0.75),
+    # El Tribuno estampa el logo entre ~50 y 70 % del ancho. Recalibrado 2026-10-18 con la fraccion
+    # local: positivos 23-33 con frac >= 0.82; negativos <= 15 con frac <= 0.70.
+    "eltribuno": BrandProfile("eltribuno", "eltribuno_mask.png", 0.40, 0.85, 48, 20.0, 0.78, 17.0, 0.74),
+    # Que Pasa Salta varia el tamano (25-45 % del ancho). Positivos 26-32 con frac >= 0.84; el logo
+    # semitransparente sobre pared clara (foto de "Salud publica", 2026-10-18) da 17.6 con frac 0.81.
+    # Negativos (36 fotos de otras fuentes y sin marca) <= 27 pero siempre con frac <= 0.71: la
+    # fraccion separa, por eso el puntaje minimo baja a 15 cuando frac >= 0.78.
+    "quepasasalta": BrandProfile("quepasasalta", "quepasasalta_text_mask.png", 0.25, 0.75, 60, 15.0, 0.78, 21.0, 0.74),
 }
+
+
+# Fuente -> marcas que se buscan en su material (politica "discard" de config/sources.yaml).
+SOURCE_BRANDS: Dict[str, List[str]] = {"eltribuno": ["eltribuno"], "quepasasalta": ["quepasasalta"]}
 
 
 @dataclass
@@ -97,6 +105,20 @@ def _kernel(mask: np.ndarray, width: int) -> Optional[Tuple[np.ndarray, np.ndarr
     return kernel, glyph, ring
 
 
+def _local_bright_fraction(window: np.ndarray, glyph: np.ndarray, ring: np.ndarray, width: int) -> float:
+    """Parte del trazo mas clara que el anillo CERCANO (no el promedio de toda la ventana): el logo
+    sigue detectandose cuando pasa sobre figuras oscuras y fondo claro a la vez."""
+    radius = max(2, int(round(width / 120)))
+    size = 6 * radius + 1
+    ring_f = ring.astype(np.float32)
+    weight = cv2.blur(ring_f, (size, size))
+    local = cv2.blur(window * ring_f, (size, size)) / np.maximum(weight, 1e-3)
+    usable = glyph & (weight > 0.02)
+    if not usable.any():
+        return 0.0
+    return float((window[usable] > local[usable] + 3).mean())
+
+
 def brand_score(gray: np.ndarray, profile: BrandProfile) -> Tuple[float, Dict[str, float]]:
     """Maximo (brillo trazo - anillo) * fraccion de trazo aclarado, sobre escalas del perfil."""
     h, w = gray.shape[:2]
@@ -118,7 +140,7 @@ def brand_score(gray: np.ndarray, profile: BrandProfile) -> Tuple[float, Dict[st
         y, x = np.unravel_index(int(np.argmax(response)), response.shape)
         value = float(response[y, x])
         window = image[y : y + kernel.shape[0], x : x + kernel.shape[1]]
-        bright = float((window[glyph] > window[ring].mean() + 4).mean())
+        bright = _local_bright_fraction(window, glyph, ring, kernel.shape[1])
         score = value * bright
         if score > best[0]:
             best = (score, {"scale": round(float(frac), 3), "x": float(x), "y": float(y), "contrast": round(value, 1), "frac": round(bright, 2)})

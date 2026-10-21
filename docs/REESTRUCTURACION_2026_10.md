@@ -366,6 +366,65 @@ estaban fuera de vigencia. La persecución en la General Paz dio 51 < 55.
   `respaldo_por_saturacion_de`.
 - Tarifas cargadas por modelo: `llm-usage` estima costos con tokens reales.
 
+## 13 quater. Correcciones tras los primeros posts en vivo (2026-10-18)
+
+Pedidas por el propietario después de revisar los 9 posts del primer ciclo.
+
+1. **Reel = video completo, tope 90 s.** Se eliminaron los carruseles de tramos de 60 s
+   (`utils/video_clips.py` borrado). `media.max_reel_seconds: 90`: un video más largo no se usa
+   (`too_long`, queda en caché como inutilizable). Si la duración viene declarada (JW Player, Genoa,
+   Arc), la nota de Paparazzi/TN/Infobae se descarta antes de evaluarla (`video_mayor_90s`); si no, se
+   bajan 92 s y se mide. Las locales con video largo siguen con imagen. Datos de 48 h: entran en 90 s
+   5 de 9 videos de Paparazzi, 6 de 8 de TN, 6 de 7 de Infobae y 11 de 14 de X.
+2. **"Qué se sabe" sintetizado.** La redacción devuelve `que_se_sabe`: 2 o 3 puntos de hasta 70
+   caracteres. Localmente se descartan los de más de 80 (nunca se truncan a mitad de frase) y los que no
+   están anclados en la nota.
+3. **Reel rediseñado** (plantilla `video`, `motion/src/templates/VideoNews.tsx`). El titular queda fijo
+   arriba durante todo el video. El video completo va al centro, sobre el campo violeta de la marca, sin
+   fondo desenfocado; los videos verticales van a pantalla completa con velos de lectura. Abajo, los
+   puntos de "Qué se sabe" rotan cada 4,5 a 7 s hasta el cierre, con indicador de avance. No queda
+   ningún tramo sin texto ni el "vaciado" con el titular abajo. Todo lo importante está entre y=300 y
+   y=1620 (recorte 4:5 del feed).
+4. **Captions** (prompt `duo-2026-10-v2`):
+   - La primera línea es un gancho de hasta 110 caracteres con emoji: lo único visible antes de "más".
+   - Siguen 2 a 4 párrafos muy cortos, cada uno con un emoji temático, y un cierre que invita a
+     comentar o compartir.
+   - En policiales, justicia o gravedad ≥ 6 se quitan los emojis frívolos (😂 🔥 🎉…).
+   - Si falta el emoji inicial, se agrega el de la categoría. El texto sin IA también lo lleva.
+5. **Marca de agua de El Tribuno que se escapó (San Benito).** El detector comparaba el trazo con el
+   promedio del anillo de toda la ventana. Con figuras oscuras delante, la fracción bajaba a 0,56 y no
+   llegaba al umbral. Ahora la compara con el anillo cercano: la foto de San Benito da 23,2 / 0,84.
+   Recalibración con 26 fotos:
+   - Positivos: entre 23 y 36, con fracción ≥ 0,82.
+   - Negativos: ≤ 23, con fracción ≤ 0,71.
+   - Sin falsos positivos.
+
+   Además, la marca se revisa en **todas** las fotos que se usan, no solo en la primera. Si todas la
+   tienen, la pieza se descarta y pasa la siguiente versión del hecho.
+6. **Carruseles con la misma foto.** Para cada foto se probaba primero la `og:image` de la nota, así
+   que todas terminaban siendo la principal. Ahora va primero la URL propia de cada foto, y se descartan
+   duplicadas por dHash (≤ 6 bits). Con una sola foto distinta, el post es una imagen simple.
+7. **Portada de video** (plantilla `cover`): una imagen de 1080×1920 hecha con un cuadro del video
+   (al 20 %), el titular, la categoría y un botón de play, todo dentro del recorte 4:5. Va como
+   `cover_url` del reel en Instagram y como miniatura preferida del video en Facebook.
+8. **Música de Instagram:** no es posible por API. La Graph API solo permite renombrar el audio
+   original (`audio_name`); no permite elegir canciones de la biblioteca, como "Movie Magic" de Global
+   Genius. Queda la opción `DUO_REEL_MUSIC_PATH`: un archivo propio con licencia de uso que el motor
+   mezcla debajo del audio original (volumen 0,12 por defecto). Está desactivada mientras no se cargue
+   un archivo.
+9. **Etiquetas de personas** (`publishers/ig_tags.py`, `config/instagram_tags.yaml`):
+   - Se etiqueta con `user_tags` en reels, imágenes y la primera imagen de los carruseles, con un
+     máximo de 3 cuentas.
+   - Solo se usan cuentas curadas o cuentas que propone la redacción y que se verifican con
+     `business_discovery`: la cuenta existe, el nombre coincide con el de la nota y supera el mínimo
+     de seguidores (personas 20.000, instituciones 5.000).
+   - La persona tiene que figurar en el texto. Nunca se etiquetan particulares, víctimas, menores,
+     detenidos ni acusados. En policiales y justicia solo se etiquetan instituciones.
+   - Si Instagram rechaza una etiqueta, el post sale sin ella.
+   - Ejemplos verificados: @policiadesalta, @gobiernosalta, @municipalidadsalta, @gustavosaenzok,
+     @ansesgob. Un caso que muestra por qué no se adivina: @gobiernodesalta existe, pero no es la
+     cuenta oficial (1.260 seguidores).
+
 ## 14. Pendientes y limitaciones reales
 
 1. **No se publicó nada en vivo** (por diseño). Falta la aprobación del propietario para habilitar
@@ -391,3 +450,20 @@ estaban fuera de vigencia. La persecución en la General Paz dio 51 < 55.
 10. El `.env` de producción todavía define `X_MODE` con un modo de scraping. El código ya no lo lee;
     se puede borrar esa línea.
 11. Los cambios no están commiteados: esperan aprobación.
+
+
+## 13 quinquies · Volumen (2026-10-18, tarde)
+
+- Diagnostico con 24 h reales: de ~180 notas locales por dia solo 26 superaban el umbral 55 y
+  quedaban afuera notas publicables de 45-55; de ~690 de TN/Infobae, 546 se descartaban por no tener video.
+- Umbral local 55 -> 45 y oficial 65 -> 58. Se reencolaron 15 notas locales del dia.
+- TN e Infobae: sin video usable (o con video de mas de 90 s) la nota igual puede salir como
+  IMAGEN si su relevancia llega a 70 (`image_min_score`). Paparazzi sigue con video obligatorio.
+  Se reevaluaron 325 nacionales de las ultimas 6 h con la regla nueva.
+- Imagenes genericas del medio (logo de Infobae sobre naranja, El Tribuno sobre azul): se descartan
+  por URL (`fallback`, `/logos/`...) y por contenido (<= 8 colores cubren el 95 % y uno >= 70 %).
+  Una nacional sin video y sin foto real no sale (`NoRealPhoto`). Los resumenes horarios de agencias
+  de Infobae (`/america/agencias/`, titulos tipo "Domingo, 18 de octubre de 2026 (12:00 GMT)") no son notas.
+- Cupo de Instagram (100 por API cada 24 h, historias incluidas): las noticias dejan 15 para
+  formatos y ningun ciclo usa mas del 25 % de lo que queda (`ig_reserve_for_formats`,
+  `max_share_of_ig_remaining`). Historias: tope 15 por dia.

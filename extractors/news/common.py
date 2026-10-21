@@ -5,7 +5,7 @@ import html
 import re
 from pathlib import Path
 from typing import Dict, Iterable, List
-from urllib.parse import urljoin, urlparse, urlunparse
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 from bs4 import BeautifulSoup
 
@@ -17,6 +17,11 @@ def strip_html(value: str) -> str:
     return re.sub(r"\s+", " ", html.unescape(text)).strip()
 
 
+# Parametros que identifican la nota (WordPress sin enlaces permanentes: Policia usa /?p=20210).
+# El resto de la query (utm, tracking) se descarta.
+_IDENTITY_PARAMS = ("p", "page_id")
+
+
 def normalize_url(url: str, base_url: str = "") -> str:
     raw = (url or "").strip()
     if not raw:
@@ -26,7 +31,8 @@ def normalize_url(url: str, base_url: str = "") -> str:
     if base_url:
         raw = urljoin(base_url, raw)
     parsed = urlparse(raw)
-    clean = parsed._replace(fragment="", query="")
+    identity = [(k, v) for k, v in parse_qsl(parsed.query) if k in _IDENTITY_PARAMS]
+    clean = parsed._replace(fragment="", query=urlencode(identity))
     return urlunparse(clean).rstrip("/")
 
 
