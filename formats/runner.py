@@ -182,17 +182,18 @@ class FormatsRunner:
             platforms.remove("instagram")
         return platforms
 
-    def _notes(self, since: datetime, *, with_views: bool = False) -> List[pieces.NoteView]:
-        """Notas publicadas en Instagram desde ``since`` (con sus vistas maximas)."""
-        query = """
+    def _notes(self, since: datetime, *, with_views: bool = False, platforms: Sequence[str] = ("instagram",)) -> List[pieces.NoteView]:
+        """Notas publicadas en ``platforms`` desde ``since`` (con sus vistas maximas), una fila por nota."""
+        query = f"""
             SELECT i.*, p.published_at, p.permalink, p.platform_media_id,
                    COALESCE((SELECT MAX(views) FROM analytics_snapshots a WHERE a.publication_id = p.id), 0) AS views
             FROM publications p JOIN content_items i USING(content_key)
-            WHERE p.platform = 'instagram' AND p.status = 'published' AND p.published_at >= ?
+            WHERE p.platform IN ({','.join('?' * len(platforms))}) AND p.status = 'published' AND p.published_at >= ?
             ORDER BY p.published_at
         """
         with self.store.connection() as conn:
-            rows = [dict(r) for r in conn.execute(query, (since.astimezone(timezone.utc).replace(microsecond=0).isoformat(),)).fetchall()]
+            found = conn.execute(query, (*platforms, since.astimezone(timezone.utc).replace(microsecond=0).isoformat())).fetchall()
+        rows = list({str(r["content_key"]): dict(r) for r in reversed(found)}.values())[::-1]
         notes = [pieces.NoteView(r, self.photo_dir, self.settings.ffmpeg_path) for r in rows]
         return sorted(notes, key=lambda n: -n.views) if with_views else notes
 
@@ -233,7 +234,8 @@ class FormatsRunner:
         if not keys or not cfg.get("enabled", True):
             return None
         since = now - timedelta(hours=3)
-        notes = [n for n in self._notes(since) if n.key in set(keys)]
+        # Feed de IG separado (2026-10-21): las notas que salen solo en Facebook tambien tienen su historia.
+        notes = [n for n in self._notes(since, platforms=("instagram", "facebook")) if n.key in set(keys)]
         out: Dict[str, Any] = {}
         groups = set(cfg.get("post_story_groups") or ["local"])
         breaking = [n for n in notes if n.urgent and cfg.get("breaking", True)]

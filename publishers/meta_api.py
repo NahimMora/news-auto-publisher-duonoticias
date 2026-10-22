@@ -377,8 +377,8 @@ class MetaGraphPublisher:
                 access_token=fb_token,
             )
         except Exception:
-            # Algunos ids (videos/reels) no aceptan esos insights: al menos likes y comentarios.
-            return self._request("GET", f"/{post_id}", params={"fields": base_fields}, access_token=fb_token)
+            # Algunos ids (videos/reels) no aceptan esos insights ni `shares`: al menos likes y comentarios.
+            return self._request("GET", f"/{post_id}", params={"fields": base_fields.replace("shares,", "")}, access_token=fb_token)
 
     def fetch_publication_comments(
         self,

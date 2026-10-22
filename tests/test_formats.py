@@ -167,6 +167,18 @@ class RunnerScheduleTests(StoreCase):
         with patch.object(runner, "_render", return_value="x.jpg"):
             self.assertEqual(runner._story("s9", "story-post", {}, now), {"skipped": "tope_diario_de_historias"})
 
+    def test_facebook_only_note_still_counts_for_stories(self) -> None:
+        # Feed de IG separado: una nota que salio solo en Facebook tambien entra a las historias, una vez por nota.
+        now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+        with self.store.connection() as conn:
+            conn.execute("INSERT INTO content_items(content_key, title, source_group) VALUES ('k2', 'Robo de celulares en Salta', 'local')")
+            conn.execute("INSERT INTO publications(content_key, platform, status, published_at, created_at, post_type) VALUES ('k2', 'facebook', 'published', ?, ?, 'image')", (now, now))
+            conn.execute("INSERT INTO publications(content_key, platform, status, published_at, created_at, post_type) VALUES ('k1', 'facebook', 'published', ?, ?, 'image')", (now, now))
+        since = datetime.now(ART) - timedelta(hours=1)
+        runner = self.runner()
+        self.assertEqual([n.key for n in runner._notes(since)], ["k1"])
+        self.assertEqual(sorted(n.key for n in runner._notes(since, platforms=("instagram", "facebook"))), ["k1", "k2"])
+
     def test_services_post_only_on_new_alert(self) -> None:
         sig = FormatsRunner._services_signature
         calm = {"water": {"cuts": []}, "passes": [{"name": "Jama", "state": "ABIERTO"}]}
