@@ -6,6 +6,9 @@ y va al reporte de operaciones: si una fuente se cae, el dueño se entera.
 - Clima y alertas: SMN. El servidor viejo (ws2.smn.gob.ar) ya no existe; la web
   actual usa ws1.smn.gob.ar/v1 con un token publico que viene embebido en
   www.smn.gob.ar. Cloudflare corta la huella TLS de httpx, por eso se usa curl.
+  Desde el 21/10/2026 la web del SMN pide un desafio de Cloudflare y el token ya no se puede
+  leer: el respaldo son los datos abiertos oficiales del SMN (ssl.smn.gob.ar/dpd, sin token):
+  tiempo presente medido en la estacion Salta y alertas; el pronostico de 4 dias, de Open-Meteo.
 - Dolar: DolarApi (respaldo: API oficial del BCRA). Historico: ArgentinaDatos.
 - Feriados: ArgentinaDatos (calendario oficial).
 - Cortes de agua: Aguas del Norte (aguasdelnortesalta.com.ar).
@@ -15,12 +18,14 @@ y va al reporte de operaciones: si una fuente se cae, el dueño se entera.
 from __future__ import annotations
 
 import html as html_lib
+import io
 import json
 import logging
 import re
 import shutil
 import subprocess
 import time
+import zipfile
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -93,6 +98,9 @@ def weather() -> Tuple[Optional[Dict[str, Any]], Status]:
     data, status = _smn_weather()
     if data is not None:
         return data, status
+    open_data, open_status = _smn_open_data()
+    if open_data is not None:
+        return open_data, open_status
     fallback = _open_meteo()
     if fallback is not None:
         return fallback, _fail(f"{status['detail']} · se uso Open-Meteo (sin alertas del SMN)")
@@ -118,6 +126,54 @@ def _open_meteo() -> Optional[Dict[str, Any]]:
     except Exception as exc:
         LOGGER.warning("Open-Meteo: %s", exc)
         return None
+
+
+SMN_OPEN_DATA = "https://ssl.smn.gob.ar/dpd/zipopendata.php?dato={}"
+ALERT_LEVELS = (("roj", 4), ("naranja", 3), ("amarill", 2))
+
+
+def _smn_open_file(dato: str) -> str:
+    """Un archivo de datos abiertos del SMN (zip con un .txt adentro)."""
+    with _client() as http:
+        raw = http.get(SMN_OPEN_DATA.format(dato)).content
+    with zipfile.ZipFile(io.BytesIO(raw)) as bundle:
+        return "".join(bundle.read(name).decode("utf-8", errors="ignore") for name in bundle.namelist())
+
+
+def _smn_open_data() -> Tuple[Optional[Dict[str, Any]], Status]:
+    """Datos abiertos del SMN: observacion oficial de la estacion Salta, alertas y pronostico de Open-Meteo."""
+    try:
+        line = next((ln for ln in _smn_open_file("tiepre").splitlines() if ln.strip().lower().startswith("salta;")), "")
+        parts = [p.strip() for p in line.split(";")]
+        if len(parts) < 10:
+            return None, _fail("SMN datos abiertos: sin la estacion Salta en tiempo presente")
+        # Salta;22-octubre-2026;08:00;Parcialmente nublado con neblina;12 km;15.6;No se calcula; 92;Sur  1;876.3 /
+        temp = float(parts[5])
+        wind = re.sub(r"\s+", " ", parts[8])
+        wind = wind + " km/h" if re.search(r"\d$", wind) else wind
+        forecast = _open_meteo()
+        if forecast is None:
+            return None, _fail("SMN datos abiertos: sin pronostico de Open-Meteo")
+        levels: Dict[str, int] = {}
+        try:
+            for alert_line in _smn_open_file("alertas").splitlines():
+                text = alert_line.lower()
+                if "salta" in text:
+                    level = next((lvl for word, lvl in ALERT_LEVELS if word in text), 0)
+                    if level:
+                        today = date.today().isoformat()
+                        levels[today] = max(levels.get(today, 1), level)
+        except Exception as exc:  # sin alertas no se frena el clima
+            LOGGER.warning("SMN alertas (datos abiertos): %s", exc)
+        data = {
+            "now": {"temp": temp, "desc": parts[3], "humidity": int(float(parts[7])), "wind": wind, "at": f"{parts[1]} {parts[2]}"},
+            "days": forecast["days"],
+            "alert_levels": levels,
+            "source": "SMN (estacion Salta) + Open-Meteo",
+        }
+        return data, _ok(f"SMN datos abiertos: {temp} °C, alerta nivel {max(levels.values() or [1])}")
+    except Exception as exc:
+        return None, _fail(f"SMN datos abiertos: {exc}")
 
 
 def _smn_weather() -> Tuple[Optional[Dict[str, Any]], Status]:

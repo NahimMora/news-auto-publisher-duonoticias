@@ -345,7 +345,8 @@ class FormatsRunner:
             return None
         cfg = self.section("digest")
         start = (now - timedelta(days=1)).replace(hour=20, minute=0, second=0, microsecond=0)
-        notes = pieces.pick_digest(self._notes(start), size=int(cfg.get("size", 5)))
+        # Con el feed de IG separado, el resumen es la forma de llevar al feed las notas que salieron solo en Facebook.
+        notes = pieces.pick_digest(self._notes(start, platforms=("instagram", "facebook")), size=int(cfg.get("size", 5)))
         if len(notes) < 3:
             self.store.set_run(slot, "digest", "done", {"skipped": f"pocas_notas:{len(notes)}"})
             return {"skipped": f"pocas_notas:{len(notes)}"}
