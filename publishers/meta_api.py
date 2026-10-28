@@ -16,6 +16,17 @@ import utils.instagram_graph_publisher as legacy_ig
 
 LOGGER = logging.getLogger("duo.meta")
 
+# Fallas de historias de IG medidas 23-28/10 (FB salio bien con el mismo archivo): Meta no
+# pudo bajar la imagen (2207003 timeout, 2207052 "Only photo or video"), el contenedor no
+# existe (2207006) o el media todavia no esta listo (2207027). Con otro contenedor suele salir.
+STORY_RETRY_SUBCODES = ("2207003", "2207006", "2207027", "2207052")
+STORY_RETRY_SLEEP_SECONDS = 15
+
+
+def _story_error_is_retryable(exc: Exception) -> bool:
+    text = str(exc)
+    return any(code in text for code in STORY_RETRY_SUBCODES) or "Timeout waiting container" in text or "is_transient': True" in text
+
 
 class MetaGraphPublisher:
     def __init__(self, settings: PipelineSettings | None = None) -> None:
@@ -590,16 +601,26 @@ class MetaGraphPublisher:
         story_asset = next((asset for asset in package.assets if asset.kind in {"video", "image"}), None)
         if story_asset is None:
             raise RuntimeError("No media available for story publish")
-        media_url = self._asset_media_url(story_asset)
-        media_kind = story_asset.kind
-        container_id = self._create_media_container(
-            media_url,
-            media_kind,
-            media_type="STORIES",
-        )
-        self._wait_container(container_id)
-        media_id = self._publish_container(container_id)
-        return media_id
+        attempts = max(1, int(os.getenv("IG_STORY_ATTEMPTS", "3")))
+        for attempt in range(attempts):
+            try:
+                media_url = self._asset_media_url(story_asset)
+                container_id = self._create_media_container(
+                    media_url,
+                    story_asset.kind,
+                    media_type="STORIES",
+                )
+                self._wait_container(container_id)
+                return self._publish_container(container_id)
+            except Exception as exc:
+                if attempt + 1 >= attempts or not _story_error_is_retryable(exc):
+                    raise
+                LOGGER.warning("historia de IG, intento %s fallo, se reintenta: %s", attempt + 1, str(exc)[:200])
+                # Archivo nuevo en R2: algunas fallas son de Meta bajando la URL anterior.
+                if story_asset.path and not story_asset.remote_url:
+                    legacy_ig._cleanup_cloudinary([story_asset.path])
+                time.sleep(STORY_RETRY_SLEEP_SECONDS * (attempt + 1))
+        raise RuntimeError("Instagram story publish failed")
 
     def _publish_carousel(self, package: FormattedPackage) -> str:
         child_ids: List[str] = []

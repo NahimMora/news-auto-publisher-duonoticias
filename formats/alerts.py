@@ -40,6 +40,7 @@ DEFAULTS: Dict[str, Any] = {
     "cycles_without_publishing": 3,
     "min_waiting_for_alert": 5,
     "production_errors": 3,
+    "story_failures": 2,
     "llm_failures": 3,
     "service_down_hours": 12,
     "min_free_disk_gb": 5,
@@ -131,8 +132,13 @@ class FailureAlerts:
                 "SELECT platform, substr(error_message, 1, 200) error, COUNT(*) n FROM publications WHERE created_at >= ? AND status = 'failed' GROUP BY platform, error",
                 (since,),
             ).fetchall()
+            # Las que despues salieron en un reintento no cuentan (2026-10-28).
             fmts = conn.execute(
-                "SELECT platform, kind, substr(error, 1, 200) error, COUNT(*) n FROM format_publications WHERE created_at >= ? AND status = 'failed' GROUP BY platform, kind, error",
+                """SELECT f.platform, f.kind, MAX(f.post_type) post_type, substr(MAX(f.error), 1, 200) error, COUNT(*) n
+                   FROM format_publications f WHERE f.created_at >= ? AND f.status = 'failed'
+                   AND NOT EXISTS (SELECT 1 FROM format_publications p WHERE p.slot = f.slot AND p.platform = f.platform
+                                   AND p.post_type = f.post_type AND p.status = 'published')
+                   GROUP BY f.platform, f.kind""",
                 (since,),
             ).fetchall()
         out: List[Problem] = []
@@ -140,6 +146,9 @@ class FailureAlerts:
             out.append(Problem(f"publicacion_falla:{row['platform']}", f"Fallan publicaciones de noticias en {row['platform']}",
                                f"{row['n']} en las últimas {self.cfg['window_hours']} h. Error: {row['error'] or 'sin detalle'}"))
         for row in fmts:
+            # Una historia suelta que falla (~6% en IG, errores de Meta al bajar la imagen) no avisa.
+            if row["post_type"] == "story" and int(row["n"]) < int(self.cfg["story_failures"]):
+                continue
             out.append(Problem(f"formato_falla:{row['platform']}:{row['kind']}", f"Falla el formato {row['kind']} en {row['platform']}",
                                f"{row['n']} en las últimas {self.cfg['window_hours']} h. Error: {row['error'] or 'sin detalle'}"))
         return out

@@ -74,6 +74,19 @@ class AlertsTests(unittest.TestCase):
         self.assertIn("publicacion_falla:instagram", problems)
         self.assertNotIn("publicacion_falla:facebook", problems)
 
+    def test_single_or_recovered_story_failure_does_not_alert(self) -> None:
+        def story(slot: str, status: str, hours_ago: float) -> None:
+            with self.store.connection() as conn:
+                conn.execute("INSERT INTO format_publications (slot, kind, platform, post_type, status, error, created_at) VALUES (?, 'story-breaking', 'instagram', 'story', ?, 'Timeout', ?)",
+                             (slot, status, iso(hours_ago)))
+
+        story("story-breaking:a", "failed", 1.5)
+        self.assertNotIn("formato_falla:instagram:story-breaking", self.keys())
+        story("story-breaking:b", "failed", 1.0)
+        self.assertIn("formato_falla:instagram:story-breaking", self.keys())
+        story("story-breaking:b", "published", 0.2)  # salio en el reintento
+        self.assertNotIn("formato_falla:instagram:story-breaking", self.keys())
+
     def test_email_once_then_repeat_then_resolved(self) -> None:
         alerts = self.alerts(repeat_hours=12)
         first = alerts.run(NOW, self.send)

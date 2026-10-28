@@ -1,0 +1,2347 @@
+{
+ "year": 2026,
+ "source": "https://www.boletinoficial.gob.ar/detalleAviso/primera/334596/20251117",
+ "resolucion": "Res. 349/2025",
+ "months": {
+  "1": {
+   "groups": [
+    {
+     "group": 1,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "0",
+      "1"
+     ],
+     "date": "2026-01-09"
+    },
+    {
+     "group": 2,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "2",
+      "3"
+     ],
+     "date": "2026-01-12"
+    },
+    {
+     "group": 3,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "4",
+      "5"
+     ],
+     "date": "2026-01-13"
+    },
+    {
+     "group": 4,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "6",
+      "7"
+     ],
+     "date": "2026-01-14"
+    },
+    {
+     "group": 5,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "8",
+      "9"
+     ],
+     "date": "2026-01-15"
+    },
+    {
+     "group": 6,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "0"
+     ],
+     "date": "2026-01-09"
+    },
+    {
+     "group": 7,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "1"
+     ],
+     "date": "2026-01-12"
+    },
+    {
+     "group": 8,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "2"
+     ],
+     "date": "2026-01-13"
+    },
+    {
+     "group": 9,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "3"
+     ],
+     "date": "2026-01-14"
+    },
+    {
+     "group": 10,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "4"
+     ],
+     "date": "2026-01-15"
+    },
+    {
+     "group": 11,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "5"
+     ],
+     "date": "2026-01-16"
+    },
+    {
+     "group": 12,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "6"
+     ],
+     "date": "2026-01-19"
+    },
+    {
+     "group": 13,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "7"
+     ],
+     "date": "2026-01-20"
+    },
+    {
+     "group": 14,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "8"
+     ],
+     "date": "2026-01-21"
+    },
+    {
+     "group": 15,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "9"
+     ],
+     "date": "2026-01-22"
+    },
+    {
+     "group": 16,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "0",
+      "1"
+     ],
+     "date": "2026-01-23"
+    },
+    {
+     "group": 17,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "2",
+      "3"
+     ],
+     "date": "2026-01-26"
+    },
+    {
+     "group": 18,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "4",
+      "5"
+     ],
+     "date": "2026-01-27"
+    },
+    {
+     "group": 19,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "6",
+      "7"
+     ],
+     "date": "2026-01-28"
+    },
+    {
+     "group": 20,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "8",
+      "9"
+     ],
+     "date": "2026-01-29"
+    }
+   ],
+   "valid_until": "2026-02-12"
+  },
+  "2": {
+   "groups": [
+    {
+     "group": 1,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "0",
+      "1"
+     ],
+     "date": "2026-02-09"
+    },
+    {
+     "group": 2,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "2",
+      "3"
+     ],
+     "date": "2026-02-10"
+    },
+    {
+     "group": 3,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "4",
+      "5"
+     ],
+     "date": "2026-02-11"
+    },
+    {
+     "group": 4,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "6",
+      "7"
+     ],
+     "date": "2026-02-12"
+    },
+    {
+     "group": 5,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "8",
+      "9"
+     ],
+     "date": "2026-02-13"
+    },
+    {
+     "group": 6,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "0"
+     ],
+     "date": "2026-02-09"
+    },
+    {
+     "group": 7,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "1"
+     ],
+     "date": "2026-02-10"
+    },
+    {
+     "group": 8,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "2"
+     ],
+     "date": "2026-02-11"
+    },
+    {
+     "group": 9,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "3"
+     ],
+     "date": "2026-02-12"
+    },
+    {
+     "group": 10,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "4"
+     ],
+     "date": "2026-02-13"
+    },
+    {
+     "group": 11,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "5"
+     ],
+     "date": "2026-02-18"
+    },
+    {
+     "group": 12,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "6"
+     ],
+     "date": "2026-02-19"
+    },
+    {
+     "group": 13,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "7"
+     ],
+     "date": "2026-02-19"
+    },
+    {
+     "group": 14,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "8"
+     ],
+     "date": "2026-02-20"
+    },
+    {
+     "group": 15,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "9"
+     ],
+     "date": "2026-02-20"
+    },
+    {
+     "group": 16,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "0",
+      "1"
+     ],
+     "date": "2026-02-23"
+    },
+    {
+     "group": 17,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "2",
+      "3"
+     ],
+     "date": "2026-02-24"
+    },
+    {
+     "group": 18,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "4",
+      "5"
+     ],
+     "date": "2026-02-25"
+    },
+    {
+     "group": 19,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "6",
+      "7"
+     ],
+     "date": "2026-02-26"
+    },
+    {
+     "group": 20,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "8",
+      "9"
+     ],
+     "date": "2026-02-27"
+    }
+   ],
+   "valid_until": "2026-03-12"
+  },
+  "3": {
+   "groups": [
+    {
+     "group": 1,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "0",
+      "1"
+     ],
+     "date": "2026-03-09"
+    },
+    {
+     "group": 2,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "2",
+      "3"
+     ],
+     "date": "2026-03-10"
+    },
+    {
+     "group": 3,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "4",
+      "5"
+     ],
+     "date": "2026-03-11"
+    },
+    {
+     "group": 4,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "6",
+      "7"
+     ],
+     "date": "2026-03-12"
+    },
+    {
+     "group": 5,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "8",
+      "9"
+     ],
+     "date": "2026-03-13"
+    },
+    {
+     "group": 6,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "0"
+     ],
+     "date": "2026-03-09"
+    },
+    {
+     "group": 7,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "1"
+     ],
+     "date": "2026-03-10"
+    },
+    {
+     "group": 8,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "2"
+     ],
+     "date": "2026-03-11"
+    },
+    {
+     "group": 9,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "3"
+     ],
+     "date": "2026-03-12"
+    },
+    {
+     "group": 10,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "4"
+     ],
+     "date": "2026-03-13"
+    },
+    {
+     "group": 11,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "5"
+     ],
+     "date": "2026-03-16"
+    },
+    {
+     "group": 12,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "6"
+     ],
+     "date": "2026-03-17"
+    },
+    {
+     "group": 13,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "7"
+     ],
+     "date": "2026-03-18"
+    },
+    {
+     "group": 14,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "8"
+     ],
+     "date": "2026-03-19"
+    },
+    {
+     "group": 15,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "9"
+     ],
+     "date": "2026-03-20"
+    },
+    {
+     "group": 16,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "0",
+      "1"
+     ],
+     "date": "2026-03-23"
+    },
+    {
+     "group": 17,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "2",
+      "3"
+     ],
+     "date": "2026-03-25"
+    },
+    {
+     "group": 18,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "4",
+      "5"
+     ],
+     "date": "2026-03-26"
+    },
+    {
+     "group": 19,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "6",
+      "7"
+     ],
+     "date": "2026-03-27"
+    },
+    {
+     "group": 20,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "8",
+      "9"
+     ],
+     "date": "2026-03-30"
+    }
+   ],
+   "valid_until": "2026-04-10"
+  },
+  "4": {
+   "groups": [
+    {
+     "group": 1,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "0",
+      "1"
+     ],
+     "date": "2026-04-10"
+    },
+    {
+     "group": 2,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "2",
+      "3"
+     ],
+     "date": "2026-04-13"
+    },
+    {
+     "group": 3,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "4",
+      "5"
+     ],
+     "date": "2026-04-14"
+    },
+    {
+     "group": 4,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "6",
+      "7"
+     ],
+     "date": "2026-04-15"
+    },
+    {
+     "group": 5,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "8",
+      "9"
+     ],
+     "date": "2026-04-15"
+    },
+    {
+     "group": 6,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "0"
+     ],
+     "date": "2026-04-10"
+    },
+    {
+     "group": 7,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "1"
+     ],
+     "date": "2026-04-13"
+    },
+    {
+     "group": 8,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "2"
+     ],
+     "date": "2026-04-14"
+    },
+    {
+     "group": 9,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "3"
+     ],
+     "date": "2026-04-15"
+    },
+    {
+     "group": 10,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "4"
+     ],
+     "date": "2026-04-16"
+    },
+    {
+     "group": 11,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "5"
+     ],
+     "date": "2026-04-17"
+    },
+    {
+     "group": 12,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "6"
+     ],
+     "date": "2026-04-20"
+    },
+    {
+     "group": 13,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "7"
+     ],
+     "date": "2026-04-21"
+    },
+    {
+     "group": 14,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "8"
+     ],
+     "date": "2026-04-22"
+    },
+    {
+     "group": 15,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "9"
+     ],
+     "date": "2026-04-23"
+    },
+    {
+     "group": 16,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "0",
+      "1"
+     ],
+     "date": "2026-04-24"
+    },
+    {
+     "group": 17,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "2",
+      "3"
+     ],
+     "date": "2026-04-27"
+    },
+    {
+     "group": 18,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "4",
+      "5"
+     ],
+     "date": "2026-04-28"
+    },
+    {
+     "group": 19,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "6",
+      "7"
+     ],
+     "date": "2026-04-29"
+    },
+    {
+     "group": 20,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "8",
+      "9"
+     ],
+     "date": "2026-04-30"
+    }
+   ],
+   "valid_until": "2026-05-12"
+  },
+  "5": {
+   "groups": [
+    {
+     "group": 1,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "0",
+      "1"
+     ],
+     "date": "2026-05-11"
+    },
+    {
+     "group": 2,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "2",
+      "3"
+     ],
+     "date": "2026-05-12"
+    },
+    {
+     "group": 3,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "4",
+      "5"
+     ],
+     "date": "2026-05-13"
+    },
+    {
+     "group": 4,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "6",
+      "7"
+     ],
+     "date": "2026-05-14"
+    },
+    {
+     "group": 5,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "8",
+      "9"
+     ],
+     "date": "2026-05-15"
+    },
+    {
+     "group": 6,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "0"
+     ],
+     "date": "2026-05-11"
+    },
+    {
+     "group": 7,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "1"
+     ],
+     "date": "2026-05-12"
+    },
+    {
+     "group": 8,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "2"
+     ],
+     "date": "2026-05-13"
+    },
+    {
+     "group": 9,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "3"
+     ],
+     "date": "2026-05-14"
+    },
+    {
+     "group": 10,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "4"
+     ],
+     "date": "2026-05-15"
+    },
+    {
+     "group": 11,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "5"
+     ],
+     "date": "2026-05-18"
+    },
+    {
+     "group": 12,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "6"
+     ],
+     "date": "2026-05-19"
+    },
+    {
+     "group": 13,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "7"
+     ],
+     "date": "2026-05-20"
+    },
+    {
+     "group": 14,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "8"
+     ],
+     "date": "2026-05-21"
+    },
+    {
+     "group": 15,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "9"
+     ],
+     "date": "2026-05-21"
+    },
+    {
+     "group": 16,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "0",
+      "1"
+     ],
+     "date": "2026-05-22"
+    },
+    {
+     "group": 17,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "2",
+      "3"
+     ],
+     "date": "2026-05-26"
+    },
+    {
+     "group": 18,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "4",
+      "5"
+     ],
+     "date": "2026-05-27"
+    },
+    {
+     "group": 19,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "6",
+      "7"
+     ],
+     "date": "2026-05-28"
+    },
+    {
+     "group": 20,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "8",
+      "9"
+     ],
+     "date": "2026-05-29"
+    }
+   ],
+   "valid_until": "2026-06-10"
+  },
+  "6": {
+   "groups": [
+    {
+     "group": 1,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "0",
+      "1"
+     ],
+     "date": "2026-06-08"
+    },
+    {
+     "group": 2,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "2",
+      "3"
+     ],
+     "date": "2026-06-09"
+    },
+    {
+     "group": 3,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "4",
+      "5"
+     ],
+     "date": "2026-06-10"
+    },
+    {
+     "group": 4,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "6",
+      "7"
+     ],
+     "date": "2026-06-11"
+    },
+    {
+     "group": 5,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "8",
+      "9"
+     ],
+     "date": "2026-06-12"
+    },
+    {
+     "group": 6,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "0"
+     ],
+     "date": "2026-06-08"
+    },
+    {
+     "group": 7,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "1"
+     ],
+     "date": "2026-06-09"
+    },
+    {
+     "group": 8,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "2"
+     ],
+     "date": "2026-06-10"
+    },
+    {
+     "group": 9,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "3"
+     ],
+     "date": "2026-06-11"
+    },
+    {
+     "group": 10,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "4"
+     ],
+     "date": "2026-06-12"
+    },
+    {
+     "group": 11,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "5"
+     ],
+     "date": "2026-06-16"
+    },
+    {
+     "group": 12,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "6"
+     ],
+     "date": "2026-06-17"
+    },
+    {
+     "group": 13,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "7"
+     ],
+     "date": "2026-06-18"
+    },
+    {
+     "group": 14,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "8"
+     ],
+     "date": "2026-06-19"
+    },
+    {
+     "group": 15,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "9"
+     ],
+     "date": "2026-06-22"
+    },
+    {
+     "group": 16,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "0",
+      "1"
+     ],
+     "date": "2026-06-23"
+    },
+    {
+     "group": 17,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "2",
+      "3"
+     ],
+     "date": "2026-06-24"
+    },
+    {
+     "group": 18,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "4",
+      "5"
+     ],
+     "date": "2026-06-25"
+    },
+    {
+     "group": 19,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "6",
+      "7"
+     ],
+     "date": "2026-06-26"
+    },
+    {
+     "group": 20,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "8",
+      "9"
+     ],
+     "date": "2026-06-29"
+    }
+   ],
+   "valid_until": "2026-07-10"
+  },
+  "7": {
+   "groups": [
+    {
+     "group": 1,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "0",
+      "1"
+     ],
+     "date": "2026-07-08"
+    },
+    {
+     "group": 2,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "2",
+      "3"
+     ],
+     "date": "2026-07-10"
+    },
+    {
+     "group": 3,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "4",
+      "5"
+     ],
+     "date": "2026-07-13"
+    },
+    {
+     "group": 4,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "6",
+      "7"
+     ],
+     "date": "2026-07-14"
+    },
+    {
+     "group": 5,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "8",
+      "9"
+     ],
+     "date": "2026-07-15"
+    },
+    {
+     "group": 6,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "0"
+     ],
+     "date": "2026-07-08"
+    },
+    {
+     "group": 7,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "1"
+     ],
+     "date": "2026-07-10"
+    },
+    {
+     "group": 8,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "2"
+     ],
+     "date": "2026-07-13"
+    },
+    {
+     "group": 9,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "3"
+     ],
+     "date": "2026-07-14"
+    },
+    {
+     "group": 10,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "4"
+     ],
+     "date": "2026-07-15"
+    },
+    {
+     "group": 11,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "5"
+     ],
+     "date": "2026-07-16"
+    },
+    {
+     "group": 12,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "6"
+     ],
+     "date": "2026-07-17"
+    },
+    {
+     "group": 13,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "7"
+     ],
+     "date": "2026-07-20"
+    },
+    {
+     "group": 14,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "8"
+     ],
+     "date": "2026-07-21"
+    },
+    {
+     "group": 15,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "9"
+     ],
+     "date": "2026-07-22"
+    },
+    {
+     "group": 16,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "0",
+      "1"
+     ],
+     "date": "2026-07-23"
+    },
+    {
+     "group": 17,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "2",
+      "3"
+     ],
+     "date": "2026-07-24"
+    },
+    {
+     "group": 18,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "4",
+      "5"
+     ],
+     "date": "2026-07-27"
+    },
+    {
+     "group": 19,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "6",
+      "7"
+     ],
+     "date": "2026-07-28"
+    },
+    {
+     "group": 20,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "8",
+      "9"
+     ],
+     "date": "2026-07-29"
+    }
+   ],
+   "valid_until": "2026-08-11"
+  },
+  "8": {
+   "groups": [
+    {
+     "group": 1,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "0",
+      "1"
+     ],
+     "date": "2026-08-10"
+    },
+    {
+     "group": 2,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "2",
+      "3"
+     ],
+     "date": "2026-08-11"
+    },
+    {
+     "group": 3,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "4",
+      "5"
+     ],
+     "date": "2026-08-12"
+    },
+    {
+     "group": 4,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "6",
+      "7"
+     ],
+     "date": "2026-08-13"
+    },
+    {
+     "group": 5,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "8",
+      "9"
+     ],
+     "date": "2026-08-14"
+    },
+    {
+     "group": 6,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "0"
+     ],
+     "date": "2026-08-10"
+    },
+    {
+     "group": 7,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "1"
+     ],
+     "date": "2026-08-11"
+    },
+    {
+     "group": 8,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "2"
+     ],
+     "date": "2026-08-12"
+    },
+    {
+     "group": 9,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "3"
+     ],
+     "date": "2026-08-13"
+    },
+    {
+     "group": 10,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "4"
+     ],
+     "date": "2026-08-14"
+    },
+    {
+     "group": 11,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "5"
+     ],
+     "date": "2026-08-18"
+    },
+    {
+     "group": 12,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "6"
+     ],
+     "date": "2026-08-19"
+    },
+    {
+     "group": 13,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "7"
+     ],
+     "date": "2026-08-20"
+    },
+    {
+     "group": 14,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "8"
+     ],
+     "date": "2026-08-21"
+    },
+    {
+     "group": 15,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "9"
+     ],
+     "date": "2026-08-24"
+    },
+    {
+     "group": 16,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "0",
+      "1"
+     ],
+     "date": "2026-08-25"
+    },
+    {
+     "group": 17,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "2",
+      "3"
+     ],
+     "date": "2026-08-26"
+    },
+    {
+     "group": 18,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "4",
+      "5"
+     ],
+     "date": "2026-08-27"
+    },
+    {
+     "group": 19,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "6",
+      "7"
+     ],
+     "date": "2026-08-28"
+    },
+    {
+     "group": 20,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "8",
+      "9"
+     ],
+     "date": "2026-08-31"
+    }
+   ],
+   "valid_until": "2026-09-11"
+  },
+  "9": {
+   "groups": [
+    {
+     "group": 1,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "0",
+      "1"
+     ],
+     "date": "2026-09-08"
+    },
+    {
+     "group": 2,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "2",
+      "3"
+     ],
+     "date": "2026-09-09"
+    },
+    {
+     "group": 3,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "4",
+      "5"
+     ],
+     "date": "2026-09-10"
+    },
+    {
+     "group": 4,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "6",
+      "7"
+     ],
+     "date": "2026-09-11"
+    },
+    {
+     "group": 5,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "8",
+      "9"
+     ],
+     "date": "2026-09-14"
+    },
+    {
+     "group": 6,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "0"
+     ],
+     "date": "2026-09-08"
+    },
+    {
+     "group": 7,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "1"
+     ],
+     "date": "2026-09-09"
+    },
+    {
+     "group": 8,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "2"
+     ],
+     "date": "2026-09-10"
+    },
+    {
+     "group": 9,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "3"
+     ],
+     "date": "2026-09-11"
+    },
+    {
+     "group": 10,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "4"
+     ],
+     "date": "2026-09-14"
+    },
+    {
+     "group": 11,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "5"
+     ],
+     "date": "2026-09-15"
+    },
+    {
+     "group": 12,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "6"
+     ],
+     "date": "2026-09-16"
+    },
+    {
+     "group": 13,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "7"
+     ],
+     "date": "2026-09-17"
+    },
+    {
+     "group": 14,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "8"
+     ],
+     "date": "2026-09-18"
+    },
+    {
+     "group": 15,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "9"
+     ],
+     "date": "2026-09-21"
+    },
+    {
+     "group": 16,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "0",
+      "1"
+     ],
+     "date": "2026-09-22"
+    },
+    {
+     "group": 17,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "2",
+      "3"
+     ],
+     "date": "2026-09-23"
+    },
+    {
+     "group": 18,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "4",
+      "5"
+     ],
+     "date": "2026-09-24"
+    },
+    {
+     "group": 19,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "6",
+      "7"
+     ],
+     "date": "2026-09-25"
+    },
+    {
+     "group": 20,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "8",
+      "9"
+     ],
+     "date": "2026-09-28"
+    }
+   ],
+   "valid_until": "2026-10-09"
+  },
+  "10": {
+   "groups": [
+    {
+     "group": 1,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "0",
+      "1"
+     ],
+     "date": "2026-10-08"
+    },
+    {
+     "group": 2,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "2",
+      "3"
+     ],
+     "date": "2026-10-09"
+    },
+    {
+     "group": 3,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "4",
+      "5"
+     ],
+     "date": "2026-10-13"
+    },
+    {
+     "group": 4,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "6",
+      "7"
+     ],
+     "date": "2026-10-14"
+    },
+    {
+     "group": 5,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "8",
+      "9"
+     ],
+     "date": "2026-10-15"
+    },
+    {
+     "group": 6,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "0"
+     ],
+     "date": "2026-10-08"
+    },
+    {
+     "group": 7,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "1"
+     ],
+     "date": "2026-10-09"
+    },
+    {
+     "group": 8,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "2"
+     ],
+     "date": "2026-10-13"
+    },
+    {
+     "group": 9,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "3"
+     ],
+     "date": "2026-10-14"
+    },
+    {
+     "group": 10,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "4"
+     ],
+     "date": "2026-10-15"
+    },
+    {
+     "group": 11,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "5"
+     ],
+     "date": "2026-10-16"
+    },
+    {
+     "group": 12,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "6"
+     ],
+     "date": "2026-10-19"
+    },
+    {
+     "group": 13,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "7"
+     ],
+     "date": "2026-10-20"
+    },
+    {
+     "group": 14,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "8"
+     ],
+     "date": "2026-10-21"
+    },
+    {
+     "group": 15,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "9"
+     ],
+     "date": "2026-10-22"
+    },
+    {
+     "group": 16,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "0",
+      "1"
+     ],
+     "date": "2026-10-23"
+    },
+    {
+     "group": 17,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "2",
+      "3"
+     ],
+     "date": "2026-10-26"
+    },
+    {
+     "group": 18,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "4",
+      "5"
+     ],
+     "date": "2026-10-27"
+    },
+    {
+     "group": 19,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "6",
+      "7"
+     ],
+     "date": "2026-10-28"
+    },
+    {
+     "group": 20,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "8",
+      "9"
+     ],
+     "date": "2026-10-29"
+    }
+   ],
+   "valid_until": "2026-11-10"
+  },
+  "11": {
+   "groups": [
+    {
+     "group": 1,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "0",
+      "1"
+     ],
+     "date": "2026-11-09"
+    },
+    {
+     "group": 2,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "2",
+      "3"
+     ],
+     "date": "2026-11-10"
+    },
+    {
+     "group": 3,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "4",
+      "5"
+     ],
+     "date": "2026-11-11"
+    },
+    {
+     "group": 4,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "6",
+      "7"
+     ],
+     "date": "2026-11-12"
+    },
+    {
+     "group": 5,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "8",
+      "9"
+     ],
+     "date": "2026-11-13"
+    },
+    {
+     "group": 6,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "0"
+     ],
+     "date": "2026-11-09"
+    },
+    {
+     "group": 7,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "1"
+     ],
+     "date": "2026-11-10"
+    },
+    {
+     "group": 8,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "2"
+     ],
+     "date": "2026-11-11"
+    },
+    {
+     "group": 9,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "3"
+     ],
+     "date": "2026-11-12"
+    },
+    {
+     "group": 10,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "4"
+     ],
+     "date": "2026-11-13"
+    },
+    {
+     "group": 11,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "5"
+     ],
+     "date": "2026-11-16"
+    },
+    {
+     "group": 12,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "6"
+     ],
+     "date": "2026-11-17"
+    },
+    {
+     "group": 13,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "7"
+     ],
+     "date": "2026-11-18"
+    },
+    {
+     "group": 14,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "8"
+     ],
+     "date": "2026-11-19"
+    },
+    {
+     "group": 15,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "9"
+     ],
+     "date": "2026-11-20"
+    },
+    {
+     "group": 16,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "0",
+      "1"
+     ],
+     "date": "2026-11-24"
+    },
+    {
+     "group": 17,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "2",
+      "3"
+     ],
+     "date": "2026-11-25"
+    },
+    {
+     "group": 18,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "4",
+      "5"
+     ],
+     "date": "2026-11-26"
+    },
+    {
+     "group": 19,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "6",
+      "7"
+     ],
+     "date": "2026-11-27"
+    },
+    {
+     "group": 20,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "8",
+      "9"
+     ],
+     "date": "2026-11-30"
+    }
+   ],
+   "valid_until": "2026-12-10"
+  },
+  "12": {
+   "groups": [
+    {
+     "group": 1,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "0",
+      "1"
+     ],
+     "date": "2026-12-09"
+    },
+    {
+     "group": 2,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "2",
+      "3"
+     ],
+     "date": "2026-12-10"
+    },
+    {
+     "group": 3,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "4",
+      "5"
+     ],
+     "date": "2026-12-11"
+    },
+    {
+     "group": 4,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "6",
+      "7"
+     ],
+     "date": "2026-12-11"
+    },
+    {
+     "group": 5,
+     "kind": "pnc",
+     "label": "Pensiones no contributivas",
+     "digits": [
+      "8",
+      "9"
+     ],
+     "date": "2026-12-11"
+    },
+    {
+     "group": 6,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "0"
+     ],
+     "date": "2026-12-09"
+    },
+    {
+     "group": 7,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "1"
+     ],
+     "date": "2026-12-10"
+    },
+    {
+     "group": 8,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "2"
+     ],
+     "date": "2026-12-11"
+    },
+    {
+     "group": 9,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "3"
+     ],
+     "date": "2026-12-14"
+    },
+    {
+     "group": 10,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "4"
+     ],
+     "date": "2026-12-15"
+    },
+    {
+     "group": 11,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "5"
+     ],
+     "date": "2026-12-15"
+    },
+    {
+     "group": 12,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "6"
+     ],
+     "date": "2026-12-15"
+    },
+    {
+     "group": 13,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "7"
+     ],
+     "date": "2026-12-16"
+    },
+    {
+     "group": 14,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "8"
+     ],
+     "date": "2026-12-16"
+    },
+    {
+     "group": 15,
+     "kind": "minimo",
+     "label": "Jubilaciones y pensiones hasta el haber mínimo",
+     "digits": [
+      "9"
+     ],
+     "date": "2026-12-16"
+    },
+    {
+     "group": 16,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "0",
+      "1"
+     ],
+     "date": "2026-12-17"
+    },
+    {
+     "group": 17,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "2",
+      "3"
+     ],
+     "date": "2026-12-18"
+    },
+    {
+     "group": 18,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "4",
+      "5"
+     ],
+     "date": "2026-12-21"
+    },
+    {
+     "group": 19,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "6",
+      "7"
+     ],
+     "date": "2026-12-22"
+    },
+    {
+     "group": 20,
+     "kind": "superior",
+     "label": "Jubilaciones y pensiones que superan el haber mínimo",
+     "digits": [
+      "8",
+      "9"
+     ],
+     "date": "2026-12-23"
+    }
+   ],
+   "valid_until": "2027-01-12"
+  }
+ }
+}

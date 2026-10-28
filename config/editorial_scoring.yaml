@@ -14,16 +14,18 @@ cycle:
 quotas:
   # Capacidad maxima por ciclo; no es una obligacion de llenado.
   # 2026-10-18: se quitaron los 2 cupos libres (decision del propietario) -> techo 10.
-  max_per_cycle: 10
+  # 2026-10-22: Facebook sin freno de cupo (el propietario pidio mandar ahi la mayor parte): local
+  # 6 -> 10 y techo 14. Instagram sigue con su propio tope (ig_feed); nacionales y Paparazzi igual.
+  max_per_cycle: 14
   groups:
-    local: 6
+    local: 10
     national: 2
     paparazzi: 2
   free: 0
   # Si se vuelven a habilitar cupos libres: grupos que podrian usarlos (nunca national).
   free_eligible_groups: [local, paparazzi, x_feed]
   # Ninguna fuente local se lleva mas de esta cantidad de los cupos locales de un ciclo.
-  max_per_source_per_cycle: 3
+  max_per_source_per_cycle: 4
   # Tope diario de piezas (0 = sin tope propio). Instagram limita la publicacion por API
   # (content_publishing_limit, 24 h moviles); el publicador lo consulta antes de cada ciclo.
   max_pieces_per_day: 0
@@ -57,6 +59,19 @@ quotas:
   ig_feed:
     per_day: 20
     video_bonus: 10
+    # Reserva extra solo para notas locales (2026-10-22): se llena despues del pool general, asi las
+    # nacionales y Paparazzi conservan su volumen y las locales que no entraron suman lugares propios.
+    # per_cycle rige fuera de las horas de madrugada (ig_news_per_hour.night_hours). Orden: relevancia
+    # + video_bonus + tema_bonus segun el tema que devuelve la evaluacion.
+    # Local por debajo de esto sale solo en Facebook (el umbral local de la cola es mas bajo).
+    local_min_score: 45
+    local_extra:
+      # 2026-10-22: el propietario pidio 3 por ciclo. per_day es un techo de seguridad: 20 generales + 30
+      # locales + ~27 historias/formatos = ~77 de las 100 publicaciones por API cada 24 h moviles.
+      per_day: 30
+      per_cycle: 3
+      tema_bonus:
+        policiales: 5
 
 queue:
   # Una candidata puede esperar como maximo esto desde su primer ingreso elegible.
@@ -112,7 +127,8 @@ relevance:
     # Recalibrado 2026-10-18 con 119 notas locales de 24 h: con 55 pasaban 26 por dia y quedaban
     # afuera notas publicables de 45-55 (accidente en El Carril, fiestas clandestinas, suba de
     # alimentos, Central Norte, litio). Con 45 pasan ~39.
-    local: 45
+    # 2026-10-22: 40 para Facebook (mas flexible); al feed de IG solo entran locales >= ig_feed.local_min_score.
+    local: 40
     local_official: 58
     # Calibrado 2026-10-18 (13 notas con video, 3 reevaluaciones): el hecho nacional grave del
     # dia promedio 73.9 (rango 66-76.5); lo siguiente promedio 41.6 o menos.
@@ -120,6 +136,9 @@ relevance:
     # Paparazzi: Dibu 83, Confessore 44, figuras conocidas 32-34, notas flojas 27-28.
     paparazzi: 32
     x_feed: 55
+    # 2026-10-22: nota de una fuente con marca de agua (El Tribuno, Que Pasa Salta, De Frente) cuya
+    # foto o video trae la marca: solo se publica, con la marca, si llega a este puntaje.
+    watermark: 70
   # Lote de notas por llamada de evaluacion.
   batch_size: 12
   # Texto maximo de cada nota que se envia a la evaluacion (titulo + bajada + inicio).
@@ -131,6 +150,9 @@ media:
   # Video mas largo que max_reel_seconds: se publican sus primeros 90 s (decision 2026-10-20).
   # En false, no se usa: la nota local sigue con imagen y Paparazzi, TN e Infobae se descartan.
   trim_long_videos: true
+  # 2026-10-22: un original de mas de 6 min (programa completo, transmision) no se usa ni recortado;
+  # entre 90 s y 6 min se recortan los primeros 90 s. La duracion se lee antes de descargar.
+  max_source_seconds: 360
   # Un video mas corto que esto no es un video de la nota (previews animados de 2 s).
   min_video_seconds: 5
   max_download_mb: 400

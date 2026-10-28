@@ -376,9 +376,13 @@ class AssetFormatter:
     def _usable_photos(self, content_key: str, paths: List[str], *, row: Dict[str, object]) -> List[str]:
         """Sin fotos repetidas (misma imagen en otro formato/tamano) y sin marcas de agua de medios.
 
-        Si todas las fotos de una fuente con politica de descarte tienen marca, la pieza no sale.
+        Si todas las fotos de una fuente con politica de descarte tienen marca, la pieza no sale, salvo
+        que la nota llegue a thresholds.watermark (2026-10-22): ahi se aceptan con la marca.
         """
         brands = SOURCE_BRANDS.get(str(row.get("source") or "").lower(), [])
+        config = getattr(self, "config", None)
+        if config is not None and config.watermark_allowed(row.get("relevance_score")):
+            brands = []
         unique: List[str] = []
         hashes: List[int] = []
         marked: List[str] = []

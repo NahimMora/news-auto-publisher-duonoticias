@@ -86,36 +86,63 @@ const BreakingStory: React.FC<{ x: Extra }> = ({ x }) => {
   );
 };
 
+type RecapItem = { headline: string; photo?: string; views?: number; category?: string };
+
+const Views: React.FC<{ n?: number; size: number }> = ({ n, size }) =>
+  n ? <span style={{ ...roleStyle(textRoles.meta, size), color: "rgba(255,255,255,0.75)" }}>👁 {fmtNum(n)} VISTAS</span> : null;
+
+const clean = (text: string) => text.replace(/\*/g, "");
+
 const RecapStory: React.FC<{ x: Extra }> = ({ x }) => {
   const { width: W } = useVideoConfig();
   const u = W / 1080;
   const m = Math.round(64 * u);
-  const items = (x.items as { headline: string; photo?: string; views?: number; category?: string }[]) ?? [];
-  const rowH = Math.round(208 * u);
+  const items = (x.items as RecapItem[]) ?? [];
+  const [first, ...rest] = items;
+  const rowH = Math.round(150 * u);
+  const firstCat = getCategory(first?.category);
   return (
-    <BrandFrame corners={0.07} tone="deep">
+    <BrandFrame corners={0.07}>
       <Head u={u} m={m} label="Lo más importante del día" />
-      <div style={{ position: "absolute", left: m, right: m, top: (TOP + 90) * u }}>
+      <div style={{ position: "absolute", left: m, right: m, top: (TOP + 84) * u, bottom: (1920 - BOTTOM + 70) * u, display: "flex", flexDirection: "column", gap: 18 * u }}>
         <span style={{ ...roleStyle(textRoles.meta, Math.round(24 * u)), color: "rgba(255,255,255,0.8)" }}>{upper(String(x.dateLabel ?? ""))}</span>
-      </div>
-      <div style={{ position: "absolute", left: m, right: m, top: (TOP + 150) * u, display: "flex", flexDirection: "column", gap: 22 * u }}>
-        {items.map((it, i) => (
-          <div key={i} style={{ display: "flex", gap: 22 * u, height: rowH, background: "rgba(255,255,255,0.07)", alignItems: "stretch" }}>
-            <div style={{ position: "relative", width: rowH, flex: "none", overflow: "hidden" }}>
-              <Photo src={it.photo} />
-              <div style={{ position: "absolute", left: 0, top: 0, padding: `${4 * u}px ${14 * u}px`, background: brand.colors.accent }}>
-                <span style={{ ...roleStyle(textRoles.dataNumber, Math.round(44 * u)), color: brand.colors.ink }}>{i + 1}</span>
-              </div>
+        {first ? (
+          <div style={{ position: "relative", flex: 1, minHeight: 420 * u, overflow: "hidden", background: brand.colors.ink }}>
+            <Photo src={first.photo} />
+            <AbsoluteFill style={{ background: "linear-gradient(to bottom, rgba(12,8,18,0) 30%, rgba(12,8,18,0.92) 82%)" }} />
+            <div style={{ position: "absolute", left: 0, top: 0, padding: `${6 * u}px ${22 * u}px`, background: brand.colors.accent }}>
+              <span style={{ ...roleStyle(textRoles.dataNumber, Math.round(84 * u)), color: brand.colors.ink }}>1</span>
             </div>
-            <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", gap: 10 * u, paddingRight: 20 * u, minWidth: 0 }}>
-              <span style={{ ...roleStyle(textRoles.kicker, Math.round(19 * u)), color: getCategory(it.category).accent }}>{upper(getCategory(it.category).label)}</span>
-              <T role={textRoles.deckStrong} size={Math.round(31 * u)} lines={3}>
-                {it.headline.replace(/\*/g, "")}
+            <div style={{ position: "absolute", left: 28 * u, right: 28 * u, bottom: 26 * u, display: "flex", flexDirection: "column", gap: 12 * u }}>
+              <span style={{ ...roleStyle(textRoles.kicker, Math.round(22 * u)), color: firstCat.accent }}>{upper(firstCat.label)} · LA MÁS VISTA</span>
+              <T role={textRoles.postHeadline} size={Math.round(54 * u)} lines={3}>
+                {clean(first.headline)}
               </T>
-              {it.views ? <span style={{ ...roleStyle(textRoles.meta, Math.round(19 * u)), color: "rgba(255,255,255,0.7)" }}>👁 {fmtNum(it.views)} VISTAS</span> : null}
+              <Views n={first.views} size={Math.round(21 * u)} />
             </div>
           </div>
-        ))}
+        ) : null}
+        {rest.map((it, i) => {
+          const cat = getCategory(it.category);
+          return (
+            <div key={i} style={{ display: "flex", gap: 22 * u, height: rowH, flex: "none", alignItems: "center", background: "rgba(255,255,255,0.07)" }}>
+              <div style={{ position: "relative", width: rowH, height: rowH, flex: "none", overflow: "hidden" }}>
+                <Photo src={it.photo} />
+                <AbsoluteFill style={{ background: "linear-gradient(135deg, rgba(12,8,18,0.8) 0%, rgba(12,8,18,0) 55%)" }} />
+                <span style={{ ...roleStyle(textRoles.dataNumber, Math.round(64 * u)), color: brand.colors.accent, position: "absolute", left: 12 * u, top: 4 * u }}>{i + 2}</span>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 * u, paddingRight: 22 * u, minWidth: 0 }}>
+                <T role={textRoles.deckStrong} size={Math.round(30 * u)} lines={2}>
+                  {clean(it.headline)}
+                </T>
+                <div style={{ display: "flex", gap: 18 * u, alignItems: "center" }}>
+                  <span style={{ ...roleStyle(textRoles.kicker, Math.round(18 * u)), color: cat.accent }}>{upper(cat.label)}</span>
+                  <Views n={it.views} size={Math.round(18 * u)} />
+                </div>
+              </div>
+            </div>
+          );
+        })}
       </div>
       <div style={{ position: "absolute", left: m, right: m, top: (BOTTOM - 40) * u, display: "flex", justifyContent: "center" }}>
         <span style={{ ...roleStyle(textRoles.kicker, Math.round(24 * u)), color: brand.colors.accent }}>TODAS LAS NOTAS EN {upper(brand.handle)}</span>
@@ -124,50 +151,82 @@ const RecapStory: React.FC<{ x: Extra }> = ({ x }) => {
   );
 };
 
+type Fact = { value: string; label: string; time: string; source: string };
+
+/**
+ * Noticia en desarrollo como linea de tiempo: arriba la foto (ocupa el alto que
+ * sobra), abajo "lo nuevo" con su hora, la cifra que cambio o lo que se sabe, y
+ * "lo que publicamos antes" para que se entienda que es una actualizacion.
+ */
 const UpdateStory: React.FC<{ x: Extra }> = ({ x }) => {
   const { width: W } = useVideoConfig();
   const u = W / 1080;
   const m = Math.round(70 * u);
-  const before = x.before as { value: string; label: string; time: string; source: string } | undefined;
-  const after = x.after as { value: string; label: string; time: string; source: string } | undefined;
+  const before = x.before as Fact | undefined;
+  const after = x.after as Fact | undefined;
+  const previous = x.previous as { headline: string; time: string } | undefined;
+  const points = ((x.points as string[]) ?? []).slice(0, before && after ? 0 : 3);
   const timeLabel = after?.time ?? String(x.timeLabel ?? "");
-  const block = useHeadline(String(x.headline ?? ""), W - m * 2, Math.round(64 * u), Math.round(100 * u), 400 * u, 4);
-  const photoH = Math.round(620 * u);
+  const block = useHeadline(String(x.headline ?? ""), W - m * 2 - 50 * u, Math.round(54 * u), Math.round(80 * u), 330 * u, 4);
+  const dot = (filled: boolean) => (
+    <div style={{ width: 26 * u, height: 26 * u, borderRadius: "50%", flex: "none", marginTop: 6 * u, background: filled ? brand.colors.accent : brand.colors.primaryDeep, border: `${5 * u}px solid ${filled ? brand.colors.accent : "rgba(255,255,255,0.5)"}` }} />
+  );
   return (
-    <BrandFrame corners={0}>
-      <div style={{ position: "absolute", left: 0, right: 0, top: 0, height: (TOP * u) + photoH, overflow: "hidden" }}>
-        <Photo src={x.photo as string} />
-        <AbsoluteFill style={{ background: `linear-gradient(to bottom, rgba(30,13,51,0.55) 0%, rgba(30,13,51,0.1) 35%, ${brand.colors.primaryDeep} 100%)` }} />
-      </div>
+    <BrandFrame corners={0.07}>
       <Head u={u} m={m} label={brand.copy.developingLabel} color={brand.colors.accent} />
-      <div style={{ position: "absolute", left: m, right: m, top: (TOP + 470) * u, display: "flex", flexDirection: "column", gap: 34 * u }}>
-        <span style={{ ...roleStyle(textRoles.kicker, Math.round(30 * u)), color: brand.colors.accent }}>⟳ ACTUALIZACIÓN{timeLabel ? ` · ${upper(timeLabel)}` : ""}</span>
-        <TextReveal layout={block} role={textRoles.postHeadline} color={brand.colors.white} accent={brand.colors.accent} mode="none" emphasisStyle="marker" markerTextColor={brand.colors.ink} />
-        {before && after ? (
-        <div style={{ display: "flex", alignItems: "stretch", gap: 18 * u, marginTop: 10 * u }}>
-          <div style={{ flex: 1, padding: `${30 * u}px`, background: "rgba(255,255,255,0.07)", display: "flex", flexDirection: "column", gap: 8 * u }}>
-            <span style={{ ...roleStyle(textRoles.meta, Math.round(22 * u)), color: "rgba(255,255,255,0.7)" }}>ANTES · {upper(before.time)}</span>
-            <span style={{ ...roleStyle(textRoles.dataNumber, Math.round(190 * u)), color: "rgba(255,255,255,0.45)", textDecoration: "line-through", textDecorationThickness: 6 * u }}>{before.value}</span>
-            <T role={textRoles.deck} size={Math.round(34 * u)} color="rgba(255,255,255,0.7)">
-              {before.label}
-            </T>
-            <SourceLine text={before.source} size={Math.round(20 * u)} color="rgba(255,255,255,0.5)" />
+      <div style={{ position: "absolute", left: m, right: m, top: (TOP + 100) * u, bottom: (1920 - BOTTOM + 100) * u, display: "flex", flexDirection: "column", gap: 44 * u }}>
+        <div style={{ position: "relative", height: 500 * u, flexShrink: 1, minHeight: 260 * u, overflow: "hidden", background: brand.colors.ink }}>
+          <Photo src={x.photo as string} />
+          <AbsoluteFill style={{ background: "linear-gradient(to bottom, rgba(12,8,18,0) 55%, rgba(12,8,18,0.7) 100%)" }} />
+          {x.location ? (
+            <span style={{ ...roleStyle(textRoles.kicker, Math.round(24 * u)), color: brand.colors.white, position: "absolute", left: 24 * u, bottom: 20 * u }}>📍 {upper(String(x.location))}</span>
+          ) : null}
+        </div>
+        <div style={{ display: "flex", gap: 28 * u, flex: 1 }}>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flex: "none" }}>
+            {dot(true)}
+            {previous ? <div style={{ flex: 1, width: 5 * u, background: "rgba(255,255,255,0.3)" }} /> : null}
+            {previous ? dot(false) : null}
           </div>
-          <div style={{ display: "flex", alignItems: "center" }}>
-            <svg width={50 * u} height={50 * u} viewBox="0 0 24 24">
-              <path d="M4 12h14M12 5l7 7-7 7" stroke={brand.colors.accent} strokeWidth="3" fill="none" />
-            </svg>
-          </div>
-          <div style={{ flex: 1, padding: `${30 * u}px`, background: brand.colors.accent, display: "flex", flexDirection: "column", gap: 8 * u }}>
-            <span style={{ ...roleStyle(textRoles.meta, Math.round(22 * u)), color: brand.colors.ink }}>AHORA · {upper(after.time)}</span>
-            <span style={{ ...roleStyle(textRoles.dataNumber, Math.round(190 * u)), color: brand.colors.ink }}>{after.value}</span>
-            <T role={textRoles.deckStrong} size={Math.round(34 * u)} color={brand.colors.ink}>
-              {after.label}
-            </T>
-            <SourceLine text={after.source} size={Math.round(20 * u)} color="rgba(12,8,18,0.7)" />
+          <div style={{ display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 30 * u, minWidth: 0, flex: 1 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 22 * u }}>
+              <span style={{ ...roleStyle(textRoles.kicker, Math.round(28 * u)), color: brand.colors.accent }}>LO NUEVO{timeLabel ? ` · ${upper(timeLabel)}` : ""}</span>
+              <TextReveal layout={block} role={textRoles.postHeadline} color={brand.colors.white} accent={brand.colors.accent} mode="none" emphasisStyle="marker" markerTextColor={brand.colors.ink} />
+            </div>
+            {before && after ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 22 * u, padding: `${18 * u}px ${24 * u}px`, background: "rgba(255,255,255,0.08)" }}>
+                <span style={{ ...roleStyle(textRoles.dataNumber, Math.round(96 * u)), color: "rgba(255,255,255,0.45)", textDecoration: "line-through", textDecorationThickness: 5 * u }}>{before.value}</span>
+                <svg width={46 * u} height={46 * u} viewBox="0 0 24 24">
+                  <path d="M4 12h14M12 5l7 7-7 7" stroke={brand.colors.accent} strokeWidth="3" fill="none" />
+                </svg>
+                <span style={{ ...roleStyle(textRoles.dataNumber, Math.round(120 * u)), color: brand.colors.accent }}>{after.value}</span>
+                <T role={textRoles.deckStrong} size={Math.round(34 * u)}>
+                  {after.label}
+                </T>
+              </div>
+            ) : null}
+            {points.length ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 18 * u }}>
+                {points.map((pt) => (
+              <div key={pt} style={{ display: "flex", gap: 16 * u, alignItems: "flex-start" }}>
+                <span style={{ width: 13 * u, height: 13 * u, background: brand.colors.accent, flex: "none", rotate: "45deg", marginTop: 14 * u }} />
+                <T role={textRoles.deck} size={Math.round(30 * u)} color="rgba(255,255,255,0.9)" lines={2}>
+                  {pt}
+                </T>
+              </div>
+                ))}
+              </div>
+            ) : null}
+            {previous ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 * u, paddingTop: 26 * u, borderTop: "1px solid rgba(255,255,255,0.16)" }}>
+                <span style={{ ...roleStyle(textRoles.meta, Math.round(22 * u)), color: "rgba(255,255,255,0.65)" }}>LO QUE PUBLICAMOS ANTES{previous.time ? ` · ${upper(previous.time)}` : ""}</span>
+                <T role={textRoles.deck} size={Math.round(28 * u)} color="rgba(255,255,255,0.65)" lines={2}>
+                  {clean(previous.headline)}
+                </T>
+              </div>
+            ) : null}
           </div>
         </div>
-        ) : null}
       </div>
       <div style={{ position: "absolute", left: m, right: m, top: (BOTTOM - 40) * u, display: "flex", justifyContent: "center" }}>
         <span style={{ ...roleStyle(textRoles.kicker, Math.round(24 * u)), color: brand.colors.white }}>SEGUIMOS LA COBERTURA EN {upper(brand.handle)}</span>
@@ -176,9 +235,35 @@ const UpdateStory: React.FC<{ x: Extra }> = ({ x }) => {
   );
 };
 
+/**
+ * Fondo descargable para compartir a mano un post o un reel en historias (2026-10-23): el marco de
+ * "Nuevo en el feed" sin la nota. El centro queda libre para el sticker del post compartido.
+ */
+const ShareBackground: React.FC<{ x: Extra }> = ({ x }) => {
+  const { width: W } = useVideoConfig();
+  const u = W / 1080;
+  const m = Math.round(70 * u);
+  const reel = x.variant === "reel";
+  return (
+    <BrandFrame corners={0.12}>
+      <Head u={u} m={m} label={reel ? "Nuevo reel" : "Nuevo en el feed"} />
+      <div style={{ position: "absolute", left: m, right: m, top: (BOTTOM - 70) * u, display: "flex", flexDirection: "column", alignItems: "center", gap: 18 * u }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 16 * u, padding: `${18 * u}px ${30 * u}px`, background: brand.colors.white, borderRadius: 60 * u }}>
+          <span style={{ ...roleStyle(textRoles.kicker, Math.round(28 * u)), color: brand.colors.ink }}>{reel ? "TOCÁ PARA VER EL REEL" : "TOCÁ PARA VER LA NOTA"}</span>
+          <svg width={34 * u} height={34 * u} viewBox="0 0 24 24">
+            <path d="M12 19V5M5 12l7-7 7 7" stroke={brand.colors.ink} strokeWidth="3" fill="none" />
+          </svg>
+        </div>
+      </div>
+    </BrandFrame>
+  );
+};
+
 const StoryInner: React.FC<TemplateProps> = ({ piece }) => {
   const x = extraOf(piece.content);
   switch (x.kind) {
+    case "story-share-bg":
+      return <ShareBackground x={x} />;
     case "story-post":
       return <PostStory x={x} />;
     case "story-breaking":

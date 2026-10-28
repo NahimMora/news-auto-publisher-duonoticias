@@ -5,11 +5,14 @@ from typing import Dict, List, Optional
 
 from extractors.news.arc import ArcNewsExtractor
 from extractors.news.eltribuno import ElTribunoExtractor
+from extractors.news.gendarmeria import GendarmeriaExtractor
 from extractors.news.html_scraper import KnownUrl
 from extractors.news.informatesalta import InformateSaltaExtractor
+from extractors.news.medioscms import MediosCmsExtractor
 from extractors.news.paparazzi import PaparazziExtractor
 from extractors.news.quepasasalta import QuePasaSaltaExtractor
 from extractors.news.saltagob import SaltaGobExtractor
+from extractors.news.saltanews import SaltaNewsExtractor
 from extractors.news.wordpress import WordPressNewsExtractor
 from storage.editorial_config import EditorialConfig, SourceSpec, load_editorial_config
 from storage.models import ExtractedContent
@@ -23,6 +26,8 @@ _HTML_PARSERS = {
     "informatesalta": InformateSaltaExtractor,
     "quepasasalta": QuePasaSaltaExtractor,
     "saltagob": SaltaGobExtractor,
+    "saltanews": SaltaNewsExtractor,
+    "gendarmeria": GendarmeriaExtractor,
 }
 
 
@@ -55,6 +60,9 @@ class SourceRegistry:
             return _HTML_PARSERS[spec.parser](self.settings)
         if spec.parser == "paparazzi":
             return PaparazziExtractor(self.settings)
+        if spec.parser == "medioscms":
+            return MediosCmsExtractor(spec.name, spec.base_url, listing_pages=list(spec.raw.get("listing_pages") or ["/historial"]),
+                                      category=spec.category or "salta", settings=self.settings)
         if spec.parser == "wordpress":
             return WordPressNewsExtractor(spec.name, spec.base_url, category=spec.category or "salta", settings=self.settings)
         if spec.parser == "arc":

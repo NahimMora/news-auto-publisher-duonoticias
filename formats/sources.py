@@ -12,8 +12,12 @@ y va al reporte de operaciones: si una fuente se cae, el dueño se entera.
 - Dolar: DolarApi (respaldo: API oficial del BCRA). Historico: ArgentinaDatos.
 - Feriados: ArgentinaDatos (calendario oficial).
 - Cortes de agua: Aguas del Norte (aguasdelnortesalta.com.ar).
-- Cortes de luz: EDESA (widget publico de cortes programados).
+- Cortes de luz: EDESA (widget publico de cortes programados, www.edesa.com.ar/widgets/cortes.php).
+  Cada corte es una tarjeta ``.outage-card``: sucursal, fecha y hora, duracion, zona (localidad y
+  barrios tal como los escribe EDESA), estado (PUBLICADO = programado, EJECUTADO, CANCELADO) y motivo.
+  Arriba de las tarjetas esta el calendario del mes: antes se leia ese texto y salia como si fuera un corte.
 - Pasos fronterizos: Ministerio de Seguridad (argentina.gob.ar).
+- Sismos: INPRES (www.inpres.gob.ar/mapa/sismos.xml, el mismo XML que arma la tabla de su portada).
 """
 from __future__ import annotations
 
@@ -314,13 +318,59 @@ def water_cuts(today: date) -> Tuple[Optional[Dict[str, Any]], Status]:
         return None, _fail(f"Aguas del Norte: {exc}")
 
 
+EDESA_STATES = {"PUBLICADO": "programado", "EJECUTADO": "ejecutado", "CANCELADO": "cancelado"}
+
+
+def parse_edesa_cuts(html: str) -> List[Dict[str, Any]]:
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "html.parser")
+    cuts: List[Dict[str, Any]] = []
+    for card in soup.select(".outage-card"):
+        button = card.select_one(".outage-card-header-button")
+        if button is None:
+            continue
+        branch = (button.select_one("b").get_text(" ", strip=True) if button.select_one("b") else "")
+        when = re.search(r"(\d{2})/(\d{2})/(\d{4})\s+(\d{2}):(\d{2})", button.get_text(" ", strip=True))
+        fields: Dict[str, str] = {}
+        for row in card.select(".card-body > div"):
+            label = row.select_one("b")
+            if label is None:
+                continue
+            name = label.get_text(" ", strip=True)
+            label.extract()
+            fields[name] = re.sub(r"\s+", " ", row.get_text(" ", strip=True)).strip()
+        if not when or not fields.get("Zona"):
+            continue  # sin fecha o sin zona no hay corte que contar
+        day, month, year, hour, minute = when.groups()
+        start = datetime(int(year), int(month), int(day), int(hour), int(minute))
+        hours, minutes = (re.match(r"(\d+):(\d+)", fields.get("Duración", "")) or re.match(r"()()", "")).groups()
+        end = start + timedelta(hours=int(hours or 0), minutes=int(minutes or 0)) if hours else None
+        state = fields.get("Estado", "").upper()
+        cuts.append({
+            "id": str(card.get("id") or "").replace("outage-", ""),
+            "branch": branch,
+            "start": start.isoformat(),
+            "end": end.isoformat() if end else None,
+            "zone": fields["Zona"],
+            "state": EDESA_STATES.get(state, state.lower()),
+            "reason": fields.get("Motivo", ""),
+        })
+    return cuts
+
+
 def power_cuts() -> Tuple[Optional[Dict[str, Any]], Status]:
     try:
         with _client() as http:
-            lines = _page_lines(http.get("https://www.edesa.com.ar/widgets/cortes.php").content)
-        if any("problema recuperando" in line.lower() for line in lines):
+            raw = http.get("https://www.edesa.com.ar/widgets/cortes.php").content
+        text = raw.decode("utf-8", errors="ignore")
+        if "problema recuperando" in text.lower():
             return None, _fail("EDESA: su listado de cortes programados no responde")
-        return {"lines": lines[:40]}, _ok(f"{len(lines)} lineas")
+        cuts = parse_edesa_cuts(text)
+        if not cuts and "outage-card" in text:
+            return None, _fail("EDESA: cambio el formato de las tarjetas de cortes")
+        upcoming = [c for c in cuts if c["state"] == "programado"]
+        return {"cuts": cuts}, _ok(f"{len(cuts)} cortes en el listado, {len(upcoming)} programados")
     except Exception as exc:
         return None, _fail(f"EDESA: {exc}")
 
@@ -338,13 +388,73 @@ def border_passes() -> Tuple[Optional[List[Dict[str, Any]]], Status]:
         for row in rows:
             name = str(row.get("nombre_paso") or "")
             if name in PASSES_SHOWN and (row.get("provincia") == "SALTA" or name == "Jama") and name not in {p["name"] for p in shown}:
-                shown.append({"name": name, "country": str(row.get("pais") or "").title(), "state": str(row.get("estado_prioridad") or ""), "hours": row.get("fecha_schema"), "at": row.get("fecha_hora_consulta")})
+                # Cancilleria: 'Mo-Su 09:00-19:00 open "Habilitado solo para cargas."' o '24/7 off "Cerrado por temporada invernal."'
+                schedule = str(row.get("fecha_schema_cancilleria") or "")
+                note = re.search(r'"([^"]+)"', schedule)
+                shown.append({
+                    "name": name, "country": str(row.get("pais") or "").title(), "state": str(row.get("estado_prioridad") or ""),
+                    "hours": row.get("fecha_schema"), "at": row.get("fecha_hora_consulta"),
+                    "season_closed": bool(re.search(r"\boff\b", schedule)), "note": note[1].strip() if note else "",
+                })
         shown.sort(key=lambda p: PASSES_SHOWN.index(p["name"]))
         if not shown:
             return None, _fail("pasos: listado sin los pasos de Salta")
         return shown, _ok(", ".join(f"{p['name']}={p['state']}" for p in shown))
     except Exception as exc:
         return None, _fail(f"pasos: {exc}")
+
+
+INPRES_XML = "https://www.inpres.gob.ar/mapa/sismos.xml"
+# color_link del XML: 00f preliminar automatico (puede estar errado), 000 revisado, f00 revisado y sentido.
+QUAKE_STATES = {"00f": "preliminar", "000": "revisado", "f00": "sentido"}
+
+
+def earthquakes() -> Tuple[Optional[List[Dict[str, Any]]], Status]:
+    """Ultimos sismos de INPRES. ``id`` es la fecha y hora UTC (AAAAMMDDhhmmss); ``hora`` es local."""
+    import xml.etree.ElementTree as ET
+
+    try:
+        with _client() as http:
+            raw = http.get(INPRES_XML).content
+        quakes = []
+        for item in ET.fromstring(raw).iter("item"):
+            def text(tag: str) -> str:
+                node = item.find(tag)
+                return (node.text or "").strip() if node is not None else ""
+
+            ident = text("idSismo")
+            quakes.append({
+                "id": ident,
+                "utc": datetime.strptime(ident, "%Y%m%d%H%M%S").strftime("%Y-%m-%dT%H:%M:%S+00:00"),
+                "lat": float(text("latitud") or 0), "lon": float(text("longitud") or 0),
+                "depth_km": float(text("prof") or 0), "magnitude": float(text("mg") or 0),
+                "province": text("prov").upper(), "state": QUAKE_STATES.get(text("color_link"), "preliminar"),
+            })
+        if not quakes:
+            return None, _fail("sismos: XML de INPRES sin eventos")
+        return quakes, _ok(f"{len(quakes)} sismos, ultimo {quakes[0]['province']} M{quakes[0]['magnitude']}")
+    except Exception as exc:
+        return None, _fail(f"sismos: {exc}")
+
+
+CONFIG_DIR = Path(__file__).resolve().parents[1] / "config"
+
+
+def anses_calendar(today: date) -> Tuple[Optional[Dict[str, Any]], Status]:
+    """Calendario oficial de ANSES del año (config/anses_calendar_<año>.json, generado desde el Boletin
+    Oficial con scripts/anses_calendar.py). Sin archivo para el año no hay placa de ANSES."""
+    path = CONFIG_DIR / f"anses_calendar_{today.year}.json"
+    if not path.exists():
+        return None, _fail(f"ANSES: falta {path.name} (correr scripts/anses_calendar.py)")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    groups = [g for month in data["months"].values() for g in month["groups"]]
+    if today.month == 12:
+        following = CONFIG_DIR / f"anses_calendar_{today.year + 1}.json"
+        if following.exists():
+            groups += [g for month in json.loads(following.read_text(encoding="utf-8"))["months"].values() for g in month["groups"]]
+    upcoming = [g for g in groups if g["date"] >= today.isoformat()]
+    valid = {k: v.get("valid_until") for k, v in data["months"].items()}
+    return {"groups": upcoming, "valid_until": valid, "resolucion": data.get("resolucion", "")}, _ok(f"{len(upcoming)} grupos de pago desde hoy")
 
 
 def collect_all(today: date) -> Tuple[Dict[str, Any], Dict[str, Status]]:
@@ -357,6 +467,8 @@ def collect_all(today: date) -> Tuple[Dict[str, Any], Dict[str, Status]]:
         ("water", lambda: water_cuts(today)),
         ("power", power_cuts),
         ("passes", border_passes),
+        ("quakes", earthquakes),
+        ("anses", lambda: anses_calendar(today)),
     ):
         value, status = fn()
         data[name] = value

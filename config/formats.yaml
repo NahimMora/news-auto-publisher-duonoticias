@@ -11,8 +11,9 @@ window_hours: 3
 stories:
   enabled: true
   max_per_day: 15
-  # Por ciclo: historia de "nuevo post" para las mejores notas locales publicadas.
-  post_stories_per_cycle: 1
+  # Por ciclo: historia de "nuevo post" para las mejores notas locales publicadas. 2026-10-23: en 0 a
+  # pedido del usuario (las comparte a mano con el fondo descargable de "Nuevo en el feed").
+  post_stories_per_cycle: 0
   post_story_groups: [local]
   # Notas marcadas como urgentes: historia de "Ultimo momento" al publicarse (cualquier grupo).
   breaking: true
@@ -22,8 +23,18 @@ weather_story: {enabled: true, hour: 7}
 weather_alert_post: {enabled: true, min_level: 2}
 digest: {enabled: true, hour: 8, size: 5, story: true}
 services: {enabled: true, story_hour: 9, post_on_change: true}
+# 2026-10-23 (placas aprobadas C1p, A1p, P1p, D1p, S2): una placa por corte de luz/agua, el dia anterior
+# o el mismo dia antes de empezar. Historia y Facebook siempre; feed de IG solo Capital o cabeceras.
+cuts: {enabled: true, start_hour: 7, end_hour: 22, max_per_cycle: 4}
+# Sueldos estatales: nota oficial del Gobierno de Salta con una unica fecha de pago; recordatorio la vispera.
+payday: {enabled: true, sources: [gobiernosalta], lookback_days: 4, eve_hour: 18}
+# ANSES "quien cobra hoy" desde config/anses_calendar_<año>.json (Boletin Oficial). Diseño aprobado 2026-10-23.
+anses: {enabled: true, hour: 8, story: true}
 holidays: {enabled: true, hour: 10, days_before: 3, monday_of_week: true}
 dollar: {enabled: true, hour: 11, weekdays_only: true}
+# 2026-10-22: placa de sismo (INPRES) cada ciclo, sin IA. provinces = provincia del epicentro segun
+# INPRES. include_preliminary: tambien los automaticos sin revisar (llegan antes pero pueden estar errados).
+quakes: {enabled: true, provinces: [SALTA], min_magnitude: 4.0, include_preliminary: false, max_age_hours: 6, story: true}
 recap: {enabled: true, hour: 20, size: 5}
 # weekday: 0 = lunes ... 6 = domingo
 weekly: {enabled: true, weekday: 6, hour: 20, size: 5}
@@ -71,6 +82,9 @@ report:
       gobiernosalta: 40
       municipalidadsalta: 40
       policiasalta: 40
+      # 2026-10-22: fuentes que publican poco (Gendarmeria en Salta cada pocos dias; AMT ~3 por mes).
+      gendarmeria: 240
+      amtsalta: 1440
     cycles_without_publishing: 3
     min_waiting_for_alert: 5
     production_errors: 3

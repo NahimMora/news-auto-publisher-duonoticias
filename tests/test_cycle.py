@@ -19,8 +19,8 @@ from unittest.mock import patch
 from jobs.pipeline import DuoPipeline
 from storage.models import Asset, ExtractedContent, FormattedPackage, PublicationRecord
 from storage.settings import get_settings
-from utils.llm_client import LLMUsage
-from utils.media_resolver import ResolvedVideo
+from utils.llm_client import LLMError, LLMUsage
+from utils.media_resolver import ResolvedVideo, VideoUnavailable
 from utils.watermark import WatermarkVerdict
 
 BODY = "El hecho ocurrio en la ciudad y afecto a muchos vecinos que pidieron respuestas a las autoridades. " * 3
@@ -54,6 +54,8 @@ class FakeLLM:
 
     def relevance(self, system: str, prompt: str):
         self.relevance_calls += 1
+        if "[rblock]" in prompt:
+            raise LLMError("Gemini sin texto (finishReason=- blockReason=PROHIBITED_CONTENT)")
         items = []
         for block in prompt.split("id=")[1:]:
             ident = block.split(" ", 1)[0]
@@ -61,12 +63,14 @@ class FakeLLM:
             score = int(match.group(1)) if match else 40
             value = score / 10
             items.append({"id": ident, "im": value, "ur": value, "ip": value, "gr": value, "nv": value, "rp": value, "pr": value,
-                          "rs": 2, "ri": 0, "pn": 0, "cs": 0 if "[sinctx]" in block else 1, "t": "sociedad", "m": "prueba"})
+                          "rs": 2, "ri": 0, "pn": 0, "cs": 0 if "[sinctx]" in block else 1, "t": "policiales" if "[pol]" in block else "sociedad", "m": "prueba"})
         self.relevance_items += len(items)
         return {"items": items}, LLMUsage(model="fake", input_tokens=100, output_tokens=50)
 
     def caption(self, system: str, prompt: str):
         self.caption_calls += 1
+        if "[block]" in prompt:
+            raise LLMError("Gemini sin texto (finishReason=- blockReason=PROHIBITED_CONTENT)")
         title = re.search(r"titulo_original: (.*)", prompt).group(1)
         return (
             {"titulo": title.replace("[", "").replace("]", ""), "caption": "Vecinos de la zona contaron lo que paso.\n\nLas autoridades siguen el caso.",
@@ -205,6 +209,9 @@ class CycleTests(unittest.TestCase):
         return rows
 
     def test_quotas_with_more_than_twelve_eligible(self) -> None:
+        # Cupos de 2026-10-18 fijados aca: el test mide la logica, no el yaml de produccion.
+        self.pipeline.config = replace(self.pipeline.config, max_per_cycle=10, max_per_source_per_cycle=3,
+                                       group_quotas={**self.pipeline.config.group_quotas, "local": 6, "national": 2, "paparazzi": 2})
         self.batches.append(self._big_batch())
         summary = self.pipeline.run_cycle(live=True, render=True)
         counts = self._published_by_group()
@@ -247,13 +254,18 @@ class CycleTests(unittest.TestCase):
         self.assertEqual(self._status("Congreso"), "published")
         self.assertEqual(self._status("calendario escolar"), "discarded")
 
-    def test_watermark_discards_before_relevance(self) -> None:
-        item = note("eltribuno", "Entrevista con una vecina de Rosario de Lerma [s90]")
-        self.watermarked.add(f"{item.ensure_content_key()}.jpg")
-        self.batches.append([item])
+    def test_watermarked_note_needs_a_very_high_score(self) -> None:
+        # 2026-10-22: con marca de agua solo sale si llega a thresholds.watermark (70).
+        low = note("eltribuno", "Entrevista con una vecina de Rosario de Lerma [s60]")
+        high = note("eltribuno", "Detienen a banda narco en Tartagal con armas de guerra [s90]")
+        self.watermarked.update({f"{low.ensure_content_key()}.jpg", f"{high.ensure_content_key()}.jpg"})
+        self.batches.append([low, high])
         self.pipeline.run_cycle(live=True)
-        self.assertEqual(self._status("Rosario de Lerma"), "discarded")
-        self.assertEqual(self.llm.relevance_calls, 0)
+        self.assertEqual(self._status("vecina"), "discarded")
+        with self.pipeline.store.connection() as conn:
+            reason = conn.execute("SELECT reason FROM queue_events qe JOIN content_items c ON c.content_key = qe.content_key WHERE c.title LIKE '%vecina%' ORDER BY qe.id DESC").fetchone()["reason"]
+        self.assertTrue(reason.startswith("marca_de_agua:"))
+        self.assertEqual(self._status("Tartagal"), "published")
 
     def test_same_event_in_two_outlets_is_one_publication(self) -> None:
         self.batches.append([
@@ -322,7 +334,8 @@ class CycleTests(unittest.TestCase):
 
     def test_split_feed_sends_only_the_best_to_instagram(self) -> None:
         # Feed de IG separado: 2 lugares en el feed; el video suma puntos y entra antes que una imagen mas puntuada.
-        self.pipeline.config = replace(self.pipeline.config, ig_feed_per_day=20, ig_news_per_hour_day=2, ig_news_per_hour_night=2, ig_feed_video_bonus=10)
+        self.pipeline.config = replace(self.pipeline.config, ig_feed_per_day=20, ig_news_per_hour_day=2, ig_news_per_hour_night=2, ig_feed_video_bonus=10,
+                                       ig_feed_local_per_day=0)
         self.batches.append([
             note("informatesalta", "Corte de agua en zona norte [s85]"),
             note("eltribuno", "Paro de colectivos de SAETA el lunes [s80]"),
@@ -341,6 +354,77 @@ class CycleTests(unittest.TestCase):
         self.assertIn("Lali", ig_titles)
         self.assertIn("Corte de agua", ig_titles)
         self.assertEqual(self._status("Oran"), "published")  # salio solo en Facebook
+
+    def test_local_reserve_adds_instagram_slots_only_for_locals(self) -> None:
+        # Pool general de 1 lugar (lo gana la nacional con video) + 1 de reserva local: entra la policial
+        # aunque tenga menos relevancia que otra local, por el bonus de tema.
+        self.pipeline.config = replace(self.pipeline.config, ig_feed_per_day=20, ig_news_per_hour_day=1, ig_news_per_hour_night=1,
+                                       ig_news_night_hours=(), ig_feed_video_bonus=10, ig_feed_local_per_day=12,
+                                       ig_feed_local_per_cycle=1, ig_feed_local_tema_bonus={"policiales": 5})
+        self.batches.append([
+            note("tn", "Terremoto en Mendoza deja edificios danados [s80]", video=True),
+            note("informatesalta", "Nuevo horario en hospitales de Oran [s62]"),
+            note("quepasasalta", "Detienen a banda que robaba motos en zona sur [s60] [pol]"),
+        ])
+        summary = self.pipeline.run_cycle(live=True)
+        self.assertEqual(summary["published"], 3)
+        instagram = {key for platform, key, _ in self.publisher.calls if platform == "instagram"}
+        with self.pipeline.store.connection() as conn:
+            titles = {r["content_key"]: r["title"] for r in conn.execute("SELECT content_key, title FROM content_items")}
+        ig_titles = " ".join(titles[k] for k in instagram)
+        self.assertEqual(len(instagram), 2)
+        self.assertIn("Terremoto", ig_titles)
+        self.assertIn("motos", ig_titles)
+        self.assertEqual(self.pipeline._ig_feed_slots(datetime.now(timezone.utc), False), (1, 1))  # la reserva no consume el pool general
+
+    def test_video_bonus_requires_a_downloadable_video(self) -> None:
+        # Un YouTube que no baja no suma el bonus de video: entra al feed la imagen mas relevante.
+        self.pipeline.config = replace(self.pipeline.config, ig_feed_per_day=20, ig_news_per_hour_day=1, ig_news_per_hour_night=1,
+                                       ig_feed_video_bonus=10, ig_feed_local_per_day=0)
+        self.batches.append([
+            note("quepasasalta", "Entrevista al intendente sobre el transito [s65]", video=True),
+            note("informatesalta", "Corte de agua en zona norte [s70]"),
+        ])
+        resolve_calls = []
+
+        def resolve(asset):
+            resolve_calls.append(asset.remote_url)
+            raise VideoUnavailable("download_failed", "youtube demasiado grande")
+
+        with patch.object(self.pipeline.media, "resolve_asset", side_effect=resolve):
+            self.pipeline.run_cycle(live=True)
+        instagram = {key for platform, key, _ in self.publisher.calls if platform == "instagram"}
+        with self.pipeline.store.connection() as conn:
+            titles = {r["content_key"]: r["title"] for r in conn.execute("SELECT content_key, title FROM content_items")}
+        self.assertEqual([titles[k] for k in instagram], ["Corte de agua en zona norte [s70]"])
+        self.assertEqual(len(resolve_calls), 1)  # produccion reutiliza la verificacion, no vuelve a bajar
+
+    def test_amt_reaches_instagram_only_with_fares(self) -> None:
+        self.pipeline.config = replace(self.pipeline.config, ig_feed_per_day=20, ig_news_per_hour_day=3, ig_news_per_hour_night=3, ig_feed_local_per_day=0)
+        self.batches.append([
+            note("amtsalta", "La AMT autorizo el nuevo cuadro tarifario para taxis y remises [s70]"),
+            note("amtsalta", "Continua el tramite de Actualizacion Documental para taxis [s65]"),
+        ])
+        self.pipeline.run_cycle(live=True)
+        instagram = {key for platform, key, _ in self.publisher.calls if platform == "instagram"}
+        facebook = {key for platform, key, _ in self.publisher.calls if platform == "facebook"}
+        with self.pipeline.store.connection() as conn:
+            titles = {r["content_key"]: r["title"] for r in conn.execute("SELECT content_key, title FROM content_items")}
+        self.assertEqual(len(facebook), 2)
+        self.assertEqual([titles[k] for k in instagram], ["La AMT autorizo el nuevo cuadro tarifario para taxis y remises [s70]"])
+
+    def test_gemini_block_does_not_lose_verified_notes(self) -> None:
+        # PROHIBITED_CONTENT no se puede apagar: el caption sale con el texto de la fuente y una nota
+        # bloqueada en la relevancia no frena al resto de su lote.
+        self.batches.append([
+            note("informatesalta", "Juzgan a un hombre por explotar a una menor en Oran [s80] [block]"),
+            note("quepasasalta", "Corte de agua en zona sur por obras de Aguas del Norte [s75]"),
+            note("eltribuno", "Nota que Gemini rechaza al evaluar [s75] [rblock]"),
+        ])
+        self.pipeline.run_cycle(live=True)
+        self.assertEqual(self._status("explotar"), "published")
+        self.assertEqual(self._status("Corte de agua"), "published")
+        self.assertEqual(self._status("rechaza"), "extracted")  # sin puntaje: se reintenta, no se publica
 
     def test_x_video_without_context_is_not_published(self) -> None:
         self.batches.append([note("x", "Video [s80] [sinctx]", video=True, body="Mira esto")])

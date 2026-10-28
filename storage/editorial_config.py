@@ -70,6 +70,8 @@ class EditorialConfig:
     ig_reserve_for_formats: int = 15
     # Video mas largo que max_reel_seconds: se usan sus primeros segundos en vez de descartarlo.
     trim_long_videos: bool = False
+    # Video original mas largo que esto: no se usa ni recortado (media.max_source_seconds; 0 = sin tope).
+    max_source_seconds: float = 0.0
     # Tope de noticias por ciclo segun la hora local (ver quotas.ig_news_per_hour).
     ig_news_night_hours: Tuple[int, ...] = (1, 2, 3, 4, 5, 6)
     ig_news_per_hour_night: int = 1
@@ -81,6 +83,11 @@ class EditorialConfig:
     ig_feed_per_day: int = 0
     # Puntos extra al ordenar quien entra al feed de IG si la nota tiene video (reel).
     ig_feed_video_bonus: float = 0.0
+    # Reserva extra del feed de IG solo para locales (quotas.ig_feed.local_extra); 0 = sin reserva.
+    ig_feed_local_per_day: int = 0
+    ig_feed_local_min_score: float = 0.0
+    ig_feed_local_per_cycle: int = 0
+    ig_feed_local_tema_bonus: Dict[str, float] = field(default_factory=dict)
     # Prueba del limite de Instagram: ignora el cupo restante y la reserva (ver quotas.ig_quota_probe).
     ig_quota_probe: bool = False
 
@@ -130,6 +137,13 @@ class EditorialConfig:
     def display_name(self, source: object) -> str:
         spec = self.source(source)
         return spec.display_name if spec else str(source or "")
+
+    def watermark_allowed(self, score: object) -> bool:
+        """Material con marca de agua de un medio: solo sale si la relevancia es muy alta (thresholds.watermark)."""
+        try:
+            return float(score or 0.0) >= float(self.thresholds.get("watermark", 70.0))
+        except (TypeError, ValueError):
+            return False
 
     def threshold_for(self, source: object, source_type: object = "") -> float:
         group = self.group_of(source, source_type)
@@ -228,6 +242,12 @@ def load_editorial_config(settings: PipelineSettings) -> EditorialConfig:
         ig_news_per_hour_peak=int(_section(quotas, "ig_news_per_hour").get("peak", _section(quotas, "ig_news_per_hour").get("day", 3))),
         ig_feed_per_day=int(_section(quotas, "ig_feed").get("per_day", 0) or 0),
         ig_feed_video_bonus=float(_section(quotas, "ig_feed").get("video_bonus", 0) or 0),
+        ig_feed_local_per_day=int(_section(_section(quotas, "ig_feed"), "local_extra").get("per_day", 0) or 0),
+        ig_feed_local_min_score=float(_section(quotas, "ig_feed").get("local_min_score", 0) or 0),
+        ig_feed_local_per_cycle=int(_section(_section(quotas, "ig_feed"), "local_extra").get("per_cycle", 0) or 0),
+        ig_feed_local_tema_bonus={
+            str(k).lower(): float(v) for k, v in _section(_section(_section(quotas, "ig_feed"), "local_extra"), "tema_bonus").items()
+        },
         ig_quota_probe=bool(quotas.get("ig_quota_probe", False)),
         pending_ttl_hours=float(queue.get("pending_ttl_hours") or 12),
         max_retries=int(queue.get("max_retries") or 3),
@@ -241,6 +261,7 @@ def load_editorial_config(settings: PipelineSettings) -> EditorialConfig:
         min_video_seconds=float(media.get("min_video_seconds") or 5),
         max_download_mb=float(media.get("max_download_mb") or 400),
         trim_long_videos=bool(media.get("trim_long_videos", False)),
+        max_source_seconds=float(media.get("max_source_seconds") or 0),
         interval_minutes=float(cycle.get("interval_minutes") or 60),
         align_minute=int(cycle.get("align_minute") or 0),
         production_budget_minutes=float(cycle.get("production_budget_minutes") or 45),

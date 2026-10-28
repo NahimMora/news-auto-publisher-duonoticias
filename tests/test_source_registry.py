@@ -6,7 +6,7 @@ from unittest.mock import patch
 from extractors.registry import SourceRegistry
 from storage.settings import get_settings
 
-ACTIVE = {"eltribuno", "informatesalta", "quepasasalta", "gobiernosalta", "policiasalta", "municipalidadsalta", "paparazzi", "tn", "infobae"}
+ACTIVE = {"eltribuno", "informatesalta", "quepasasalta", "defrentesalta", "saltanews", "gendarmeria", "amtsalta", "gobiernosalta", "policiasalta", "municipalidadsalta", "paparazzi", "tn", "infobae"}
 REMOVED = {"nuevodiariodesalta", "fiscalespenalesalta", "justiciasalta", "noticiasargentinas", "minutouno", "elonce", "ambitofinanciero", "ariesonline", "eloncesalta"}
 
 
@@ -27,7 +27,7 @@ class SourceRegistryTests(unittest.TestCase):
 
     def test_groups_and_video_rules(self) -> None:
         config = self.registry.config
-        self.assertEqual({s for s in ACTIVE if config.group_of(s) == "local"}, {"eltribuno", "informatesalta", "quepasasalta", "gobiernosalta", "policiasalta", "municipalidadsalta"})
+        self.assertEqual({s for s in ACTIVE if config.group_of(s) == "local"}, {"eltribuno", "informatesalta", "quepasasalta", "defrentesalta", "saltanews", "gendarmeria", "amtsalta", "gobiernosalta", "policiasalta", "municipalidadsalta"})
         self.assertEqual(config.group_of("tn"), config.group_of("infobae"))
         self.assertEqual(config.group_of("tn"), "national")
         for source in ("tn", "infobae", "paparazzi"):

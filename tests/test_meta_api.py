@@ -345,6 +345,39 @@ class MetaGraphPublisherTests(unittest.TestCase):
         )
 
 
+class InstagramStoryRetryTests(unittest.TestCase):
+    def tearDown(self) -> None:
+        get_settings.cache_clear()
+
+    def _publisher(self) -> MetaGraphPublisher:
+        with patch.dict(os.environ, {"IG_ACCESS_TOKEN": "t", "IG_USER_ID": "1"}, clear=False):
+            get_settings.cache_clear()
+            return MetaGraphPublisher(get_settings())
+
+    def test_meta_download_error_gets_a_new_container(self) -> None:
+        publisher = self._publisher()
+        package = FormattedPackage(content_key="story", post_type="story", caption="", assets=[Asset(kind="image", remote_url="https://x/s.jpg")])
+        created = []
+
+        def create(url, kind, **kwargs):
+            created.append(url)
+            if len(created) == 1:
+                raise RuntimeError("{'error': {'message': 'Timeout', 'code': -2, 'error_subcode': 2207003}}")
+            return "c2"
+
+        with patch.object(publisher, "_create_media_container", side_effect=create),                 patch.object(publisher, "_wait_container"),                 patch.object(publisher, "_publish_container", return_value="m1"),                 patch("publishers.meta_api.time.sleep"):
+            self.assertEqual(publisher._publish_instagram_story(package), "m1")
+        self.assertEqual(len(created), 2)
+
+    def test_other_errors_are_not_retried(self) -> None:
+        publisher = self._publisher()
+        package = FormattedPackage(content_key="story", post_type="story", caption="", assets=[Asset(kind="image", remote_url="https://x/s.jpg")])
+        with patch.object(publisher, "_create_media_container", side_effect=RuntimeError("token expirado")) as create,                 patch("publishers.meta_api.time.sleep"):
+            with self.assertRaises(RuntimeError):
+                publisher._publish_instagram_story(package)
+        self.assertEqual(create.call_count, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
 

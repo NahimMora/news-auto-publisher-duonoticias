@@ -7,6 +7,7 @@ Turnos (hora local, una vez por dia, ver ``config/formats.yaml``):
 - 10 h proximo feriado (lunes de la semana del feriado y 3 dias antes)
 - 11 h dolar (dias habiles)
 - 20 h historia "Lo mas importante del dia"; domingos, reel del top 5 semanal
+- cada ciclo: placa de sismo (INPRES) en Salta de magnitud >= 4, revisado por un sismologo
 Cada ciclo: historia de las notas publicadas (local destacada o urgente),
 actualizaciones de noticias en desarrollo, respuestas a comentarios y reporte.
 
@@ -16,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
@@ -92,10 +94,15 @@ class FormatsRunner:
             ("snapshot", lambda: self.account_snapshot(now)),
             ("service_data", lambda: self.service_data(now)),
             ("note_stories", lambda: self.note_stories(published_keys, now)),
+            ("story_retries", lambda: self.retry_failed_stories(now)),
             ("updates", lambda: self.updates(published_keys, now)),
             ("weather", lambda: self.weather(now)),
             ("digest", lambda: self.digest(now)),
             ("services", lambda: self.services(now)),
+            ("cuts", lambda: self.cuts(now)),
+            ("quakes", lambda: self.quakes(now)),
+            ("payday", lambda: self.payday(now)),
+            ("anses", lambda: self.anses(now)),
             ("holidays", lambda: self.holidays(now)),
             ("dollar", lambda: self.dollar(now)),
             ("recap", lambda: self.recap(now)),
@@ -229,6 +236,33 @@ class FormatsRunner:
     # Historias de las notas del ciclo
     # ------------------------------------------------------------------
 
+    def retry_failed_stories(self, now: datetime) -> Optional[Dict[str, Any]]:
+        """Historias de ultima hora que fallaron en IG en las ultimas horas: se reintentan con la
+        misma imagen ya renderizada (2026-10-28: ~6% fallaba por errores de Meta y se perdia)."""
+        cfg = self.section("stories")
+        hours, max_failures = float(cfg.get("retry_hours", 2)), int(cfg.get("retry_max_failures", 3))
+        since = (now - timedelta(hours=hours)).astimezone(timezone.utc).replace(microsecond=0).isoformat()
+        with self.store.connection() as conn:
+            rows = conn.execute(
+                """SELECT f.slot, f.kind, MIN(f.created_at) first_at, COUNT(*) n FROM format_publications f
+                   WHERE f.kind = 'story-breaking' AND f.platform = 'instagram' AND f.post_type = 'story'
+                   AND f.status = 'failed' AND f.created_at >= ?
+                   AND NOT EXISTS (SELECT 1 FROM format_publications p WHERE p.slot = f.slot AND p.platform = 'instagram'
+                                   AND p.post_type = 'story' AND p.status = 'published')
+                   GROUP BY f.slot, f.kind""",
+                (since,),
+            ).fetchall()
+        out: Dict[str, Any] = {}
+        for row in rows:
+            if int(row["n"]) >= max_failures or not self.publisher.ig_room():
+                continue
+            day = datetime.fromisoformat(str(row["first_at"])).astimezone(self.zone).strftime("%Y-%m-%d")
+            path = self.out / day / f"{str(row['slot']).replace(':', '_')}.jpg"
+            if not path.exists():
+                continue
+            out[f"retry:{str(row['slot']).split(':')[-1][:8]}"] = self._record(row["slot"], row["kind"], self.publisher.story(str(path), platforms=["instagram"]))
+        return out or None
+
     def note_stories(self, keys: Sequence[str], now: datetime) -> Optional[Dict[str, Any]]:
         cfg = self.section("stories")
         if not keys or not cfg.get("enabled", True):
@@ -273,7 +307,7 @@ class FormatsRunner:
     def _apply_update(self, row: Dict[str, Any], slot: str, now: datetime, cfg: Dict[str, Any]) -> Dict[str, Any]:
         with self.store.connection() as conn:
             previous = conn.execute(
-                """SELECT i.content_key, i.title, i.summary, i.body_text, i.source, i.created_at FROM content_items i
+                """SELECT i.* FROM content_items i
                    WHERE i.event_key = ? AND i.content_key != ? AND i.pipeline_status = 'published'
                    ORDER BY i.updated_at LIMIT 1""",
                 (row.get("event_key"), row["content_key"]),
@@ -294,17 +328,17 @@ class FormatsRunner:
             line = f"🔄 ACTUALIZACIÓN {stamp} h: {note.headline.replace('*', '')}. Más datos en nuestro último post."
         out: Dict[str, Any] = {"change": change}
         if cfg.get("story", True):
+            created = pieces.parse_ts(previous.get("created_at"))
+            prev_at = created.astimezone(self.zone).strftime("%d/%m %H:%M h") if created else ""
             before = after = None
             if change:
-                try:
-                    old_at = datetime.fromisoformat(str(previous.get("created_at")).replace("Z", "+00:00")).astimezone(self.zone).strftime("%d/%m %H:%M h")
-                except ValueError:
-                    old_at = ""
+                old_at = prev_at
                 before = {"value": str(change["before"]), "label": change["noun"], "time": old_at, "source": pieces.SOURCE_NAMES.get(str(previous.get("source")), str(previous.get("source")))}
                 after = {"value": str(change["after"]), "label": change["noun"], "time": f"{stamp} h", "source": source}
             else:
                 after = {"time": f"{stamp} h"}
-            out["story"] = self._story(slot, "story-update", pieces.story_update(note, note.headline, before, after), now, force=True)
+            first = {"headline": pieces.NoteView(previous, self.photo_dir, self.settings.ffmpeg_path).headline, "time": prev_at}
+            out["story"] = self._story(slot, "story-update", pieces.story_update(note, note.headline, before, after, first), now, force=True)
         fb = pubs.get("facebook")
         if fb and cfg.get("facebook_edit", True):
             original = str(fb.get("caption") or "")
@@ -327,7 +361,7 @@ class FormatsRunner:
         slot = self._due("weather_story", now)
         if slot and data:
             built = pieces.piece("weather-story", "board", "reel", pieces.weather_extra(data, now.date()))
-            out["story"] = self._story(slot, "weather-story", built, now)
+            out["story"] = self._story(slot, "weather-story", built, now, force=True)
             self.store.set_run(slot, "weather_story", "done", out["story"])
         alert_cfg = self.section("weather_alert_post")
         level = (data or {}).get("alert_levels", {}).get(now.date().isoformat(), 1)
@@ -356,7 +390,7 @@ class FormatsRunner:
         caption = pieces.digest_caption(notes, service.get("weather"), now.date())
         out = {"post": self._record(slot, "digest", self.publisher.post(caption, paths, platforms=self._feed_platforms(slot, "carousel")))}
         if cfg.get("story", True):
-            out["story"] = self._story(slot, "digest-story", pieces.piece("digest-story", "story", "reel", {"kind": "story-post", "image": paths[0], "headline": "Lo que tenés que saber hoy"}), now)
+            out["story"] = self._story(slot, "digest-story", pieces.piece("digest-story", "story", "reel", {"kind": "story-post", "image": paths[0], "headline": "Lo que tenés que saber hoy"}), now, force=True)
         self.store.set_run(slot, "digest", "done", out)
         return out
 
@@ -369,29 +403,190 @@ class FormatsRunner:
         out: Dict[str, Any] = {}
         slot = self._due("services", now, hour=int(cfg.get("story_hour", 9)))
         if slot:
-            out["story"] = self._story(slot, "services-story", pieces.piece("services-story", "board", "reel", extra), now)
+            out["story"] = self._story(slot, "services-story", pieces.piece("services-story", "board", "reel", extra), now, force=True)
             self.store.set_run(slot, "services", "done", out["story"])
         if cfg.get("post_on_change", True):
-            signature = self._services_signature(service)
+            # 2026-10-23: en vez del tablero completo, una placa "PASO CERRADO" por cada paso que se cierra
+            # en su horario. Los cortes de agua salen como placa propia en cuts().
+            signature = self._services_signature(service, now)
             last = self.store.last_run("services_state")
             previous = json.loads(last["detail_json"]).get("signature") if last else None
             state_slot = f"services_state:{now.strftime('%Y-%m-%dT%H')}"
-            if previous is not None and signature["alerts"] and signature["alerts"] != previous.get("alerts") and 7 <= now.hour <= 22:
-                path = self._render(pieces.piece("services", "board", "portrait", extra), state_slot.replace(":", "_"))
-                out["post"] = self._record(state_slot, "services", self.publisher.post(pieces.services_caption(extra), [path], platforms=self._feed_platforms(state_slot, "image")))
+            if previous is not None and 7 <= now.hour <= 22:
+                newly = {a.split(":", 1)[1] for a in signature["alerts"] if a.startswith("paso:")} - {a.split(":", 1)[1] for a in previous.get("alerts", []) if a.startswith("paso:")}
+                for p in [p for p in service.get("passes") or [] if p["name"] in newly]:
+                    slot = f"pass:{p['name']}:{now.strftime('%Y-%m-%dT%H')}"
+                    built = pieces.pass_extra(p, now)
+                    path = self._render(pieces.piece("pass", "board", "portrait", built), slot.replace(":", "_").replace(" ", "_") + "_post")
+                    result = {"post": self._record(slot, "pass", self.publisher.post(pieces.pass_caption(built), [path], platforms=self._feed_platforms(slot, "image")))}
+                    result["story"] = self._story(slot, "pass-story", pieces.piece("pass-story", "board", "reel", built), now, force=True)
+                    out.setdefault("passes", {})[p["name"]] = result
             self.store.set_run(state_slot, "services_state", "done", {"signature": signature})
         return out or None
 
+    def cuts(self, now: datetime) -> Optional[Dict[str, Any]]:
+        """Una placa por corte de luz (EDESA) o de agua (Aguas del Norte), aprobadas C1p/A1p.
+
+        Sale el dia anterior al corte o el mismo dia si se anuncia tarde (antes de que empiece), entre las 7
+        y las 22. Historia siempre; feed de Facebook siempre; feed de IG solo si afecta a la Capital o a una
+        ciudad cabecera. Si EDESA cancela un corte ya anunciado, historia CANCELADO.
+        """
+        cfg = self.section("cuts")
+        if not cfg.get("enabled", True) or not (int(cfg.get("start_hour", 7)) <= now.hour <= int(cfg.get("end_hour", 22))):
+            return None
+        service = self._service or {}
+        today = now.date()
+        due: List[tuple] = []
+        for cut in (service.get("power") or {}).get("cuts") or []:
+            start = datetime.fromisoformat(cut["start"]).replace(tzinfo=self.zone)
+            slot = f"cut:{cut['id']}"
+            if cut["state"] == "programado" and start > now and start.date() <= today + timedelta(days=1):
+                due.append((slot, "luz", cut, "cut"))
+            elif cut["state"] == "cancelado" and start > now and self.store.run_status(slot) == "done":
+                due.append((f"cut-cancel:{cut['id']}", "luz", cut, "cancel"))
+        for cut in (service.get("water") or {}).get("cuts") or []:
+            day = date.fromisoformat(cut["date"])
+            if today <= day <= today + timedelta(days=1):
+                due.append((f"water:{cut['zone']}:{cut['date']}", "agua", cut, "cut"))
+        out: Dict[str, Any] = {}
+        pending = [d for d in due if self.store.run_status(d[0]) != "done"]
+        for slot, service_name, cut, mode in pending[: int(cfg.get("max_per_cycle", 4))]:
+            built = pieces.cut_extra(service_name, cut, today)
+            if not built:
+                self.store.set_run(slot, "cut", "done", {"skipped": "sin_localidad"})
+                continue
+            name = slot.replace(":", "_").replace(" ", "_")[:80]
+            result: Dict[str, Any] = {}
+            if mode == "cut":
+                platforms = self._feed_platforms(slot, "image")
+                if not pieces.is_major_place(built["place"]) and "instagram" in platforms:
+                    platforms.remove("instagram")
+                path = self._render(pieces.piece("cut", "board", "portrait", built), name + "_post")
+                result["post"] = self._record(slot, "cut", self.publisher.post(pieces.cut_caption(built), [path], platforms=platforms))
+            result["story"] = self._story(slot, "cut-story", pieces.piece("cut-story", "board", "reel", built), now, force=True)
+            self.store.set_run(slot, "cut", "done", result)
+            out[slot] = result
+        return out or None
+
+    def payday(self, now: datetime) -> Optional[Dict[str, Any]]:
+        """Sueldos estatales (aprobada S2): placa cuando el Gobierno de Salta anuncia la fecha de pago, e
+        historia de recordatorio el dia anterior. Solo notas oficiales con una unica fecha."""
+        cfg = self.section("payday")
+        if not cfg.get("enabled", True) or not (7 <= now.hour <= 22):
+            return None
+        since = (now - timedelta(days=int(cfg.get("lookback_days", 4)))).astimezone(timezone.utc).isoformat()
+        sources_ok = tuple(cfg.get("sources") or ["gobiernosalta"])
+        with self.store.connection() as conn:
+            rows = [dict(r) for r in conn.execute(
+                f"SELECT title, body_text, summary, created_at FROM content_items WHERE source IN ({','.join('?' * len(sources_ok))}) AND created_at >= ? ORDER BY created_at",
+                (*sources_ok, since),
+            ).fetchall()]
+        out: Dict[str, Any] = {}
+        for row in rows:
+            built = pieces.payday_extra(row, now.date())
+            if not built:
+                continue
+            slot = f"payday:{built['date']}"
+            if self.store.run_status(slot) != "done":
+                path = self._render(pieces.piece("payday", "board", "portrait", built), slot.replace(":", "_") + "_post")
+                result = {"post": self._record(slot, "payday", self.publisher.post(pieces.payday_caption(built), [path], platforms=self._feed_platforms(slot, "image")))}
+                result["story"] = self._story(slot, "payday-story", pieces.piece("payday-story", "board", "reel", built), now, force=True)
+                self.store.set_run(slot, "payday", "done", result)
+                out[slot] = result
+            eve = f"payday-eve:{built['date']}"
+            if built["daysLeft"] == 1 and now.hour >= int(cfg.get("eve_hour", 18)) and self.store.run_status(eve) != "done":
+                result = self._story(eve, "payday-story", pieces.piece("payday-story", "board", "reel", built), now, force=True)
+                self.store.set_run(eve, "payday", "done", result)
+                out[eve] = result
+        return out or None
+
+    def anses(self, now: datetime) -> Optional[Dict[str, Any]]:
+        """ANSES: quien cobra hoy segun el calendario oficial (config/anses_calendar_<año>.json)."""
+        slot = self._due("anses", now)
+        calendar = (self._service or {}).get("anses")
+        if not slot or not calendar:
+            return None
+        holidays = (self._service or {}).get("holidays")
+        feed = pieces.anses_extra(calendar, now.date(), holidays, max_lines=4)
+        if not feed:
+            self.store.set_run(slot, "anses", "done", {"skipped": "sin_pagos_hoy"})
+            return None
+        path = self._render(pieces.piece("anses", "board", "portrait", feed), slot.replace(":", "_") + "_post")
+        out = {"post": self._record(slot, "anses", self.publisher.post(pieces.anses_caption(feed), [path], platforms=self._feed_platforms(slot, "image")))}
+        if self.section("anses").get("story", True):
+            out["story"] = self._story(slot, "anses-story", pieces.piece("anses-story", "board", "reel", pieces.anses_extra(calendar, now.date(), holidays)), now, force=True)
+        self.store.set_run(slot, "anses", "done", out)
+        return out
+
     @staticmethod
-    def _services_signature(service: Dict[str, Any]) -> Dict[str, Any]:
-        """Lo que justifica un post: cortes de agua vigentes y pasos cerrados (los cerrados de siempre no)."""
+    def _services_signature(service: Dict[str, Any], now: Optional[datetime] = None) -> Dict[str, Any]:
+        """Lo que justifica un post: cortes de agua vigentes y pasos cerrados en su horario de atencion.
+
+        Un paso cerrado fuera de horario (Sico, Jama y Socompa cierran de noche) es lo normal: antes
+        cada cierre nocturno publicaba un post de servicios (8 entre el 18 y el 22/10).
+        """
         alerts: List[str] = []
         for cut in (service.get("water") or {}).get("cuts") or []:
             alerts.append(f"agua:{cut['zone']}:{cut['date']}")
         for p in service.get("passes") or []:
-            if p["state"] != "ABIERTO":
+            # Cerrado por temporada (Socompa en invierno) es su estado normal, no una novedad.
+            if p["state"] != "ABIERTO" and not p.get("season_closed") and FormatsRunner._pass_should_be_open(str(p.get("hours") or ""), now):
                 alerts.append(f"paso:{p['name']}")
         return {"alerts": sorted(alerts)}
+
+    @staticmethod
+    def _pass_should_be_open(hours: str, now: Optional[datetime], margin: int = 30) -> bool:
+        """``hours`` como "09:00-19:15" o "24/7"; sin horario no se sabe si deberia estar abierto y no
+        cuenta. Con ``margin`` minutos de tolerancia en la apertura y el cierre (el listado oficial
+        tarda en actualizarse)."""
+        if now is None or hours.strip() == "24/7":
+            return True
+        m = re.match(r"\s*(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})", hours)
+        if not m:
+            return False
+        start = int(m[1]) * 60 + int(m[2]) + margin
+        end = int(m[3]) * 60 + int(m[4]) - margin
+        minute = now.hour * 60 + now.minute
+        return start <= minute <= end
+
+    def quakes(self, now: datetime) -> Optional[Dict[str, Any]]:
+        """Placa fija (sin IA) por cada sismo nuevo en Salta que llegue a la magnitud minima.
+
+        Por defecto solo los revisados por un sismologo (negro o rojo en INPRES): los preliminares
+        automaticos pueden estar errados. Un sismo sale una sola vez (slot por id de INPRES).
+        """
+        cfg = self.section("quakes")
+        forced = "quakes" in self.force
+        if not cfg.get("enabled", True) and not forced:
+            return None
+        data = (self._service or {}).get("quakes") or []
+        provinces = {str(p).upper() for p in cfg.get("provinces") or ["SALTA"]}
+        states = {"revisado", "sentido"} | ({"preliminar"} if cfg.get("include_preliminary") else set())
+        due = []
+        for quake in data:
+            when = datetime.fromisoformat(quake["utc"]).astimezone(self.zone)
+            if quake["province"] not in provinces or quake["magnitude"] < float(cfg.get("min_magnitude", 4.0)) or quake["state"] not in states:
+                continue
+            if now - when > timedelta(hours=float(cfg.get("max_age_hours", 6))):
+                continue
+            due.append((quake, when))
+        if forced and not due:
+            # Vista previa a mano: el ultimo sismo de Salta aunque no llegue al minimo.
+            salta = [q for q in data if q["province"] in provinces] or data[:1]
+            due = [(q, datetime.fromisoformat(q["utc"]).astimezone(self.zone)) for q in salta[:1]]
+        out: Dict[str, Any] = {}
+        for quake, when in due:
+            slot = f"quake:{quake['id']}"
+            if self.store.run_status(slot) == "done":
+                continue
+            extra = pieces.quake_extra(quake, when)
+            path = self._render(pieces.piece("quake", "board", "portrait", extra), slot.replace(":", "_") + "_post")
+            result = {"post": self._record(slot, "quake", self.publisher.post(pieces.quake_caption(extra), [path], platforms=self._feed_platforms(slot, "image")))}
+            if cfg.get("story", True):
+                result["story"] = self._story(slot, "quake-story", pieces.piece("quake-story", "board", "reel", extra), now, force=True)
+            self.store.set_run(slot, "quake", "done", result)
+            out[quake["id"]] = result
+        return out or None
 
     def holidays(self, now: datetime) -> Optional[Dict[str, Any]]:
         cfg = self.section("holidays")
@@ -428,7 +623,7 @@ class FormatsRunner:
         if not slot:
             return None
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        notes = [n for n in self._notes(start, with_views=True) if n.photo()][: int(self.section("recap").get("size", 5))]
+        notes = pieces.one_per_event([n for n in self._notes(start, with_views=True) if n.photo()])[: int(self.section("recap").get("size", 5))]
         if len(notes) < 3:
             self.store.set_run(slot, "recap", "done", {"skipped": "pocas_notas"})
             return {"skipped": "pocas_notas"}
@@ -479,7 +674,7 @@ class FormatsRunner:
         return reporter.send(now)
 
 
-STEPS = ("weather_story", "weather_alert_post", "digest", "services", "holidays", "dollar", "recap", "weekly", "comments", "report")
+STEPS = ("weather_story", "weather_alert_post", "digest", "services", "quakes", "holidays", "dollar", "recap", "weekly", "comments", "report")
 
 
 class DryPublisher(FormatsPublisher):

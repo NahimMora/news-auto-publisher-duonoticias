@@ -2,7 +2,7 @@
 
 Dos casos, nada mas:
 
-1. Marcas de agua de medios (El Tribuno, Que Pasa Salta): logo + texto blanco
+1. Marcas de agua de medios (El Tribuno, Que Pasa Salta, De Frente Salta): logo + texto blanco
    semitransparente sobre la foto o el video. Una capa blanca translucida aclara
    de forma pareja los pixeles del trazo respecto de su borde inmediato, sea cual
    sea el fondo. El detector usa la mascara real del logo (``config/watermarks``)
@@ -61,11 +61,16 @@ BRANDS: Dict[str, BrandProfile] = {
     # Negativos (36 fotos de otras fuentes y sin marca) <= 27 pero siempre con frac <= 0.71: la
     # fraccion separa, por eso el puntaje minimo baja a 15 cuando frac >= 0.78.
     "quepasasalta": BrandProfile("quepasasalta", "quepasasalta_text_mask.png", 0.25, 0.75, 60, 15.0, 0.78, 21.0, 0.74),
+    # De Frente Salta: texto "Defrentesalta" blanco, opaco en videos y tenue en fotos (mascara sacada de un
+    # video propio, 2026-10-22). Calibrado con 48 notas: casi todo su material viene marcado; videos
+    # marcados 36-134 (frac >= 0.94), video limpio 11.5; fotos marcadas desde 14 (frac 0.65). Umbral
+    # bajo a proposito: ante la duda se trata como marcada (solo sale con relevancia >= thresholds.watermark).
+    "defrentesalta": BrandProfile("defrentesalta", "defrentesalta_text_mask.png", 0.12, 0.70, 60, 15.0, 0.65, 12.0, 0.60),
 }
 
 
 # Fuente -> marcas que se buscan en su material (politica "discard" de config/sources.yaml).
-SOURCE_BRANDS: Dict[str, List[str]] = {"eltribuno": ["eltribuno"], "quepasasalta": ["quepasasalta"]}
+SOURCE_BRANDS: Dict[str, List[str]] = {"eltribuno": ["eltribuno"], "quepasasalta": ["quepasasalta"], "defrentesalta": ["defrentesalta"]}
 
 
 @dataclass

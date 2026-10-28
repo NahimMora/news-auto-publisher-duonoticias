@@ -36,6 +36,8 @@ export const brand = {
     /** Senal de urgencia: solo para el punto "en vivo" y la etiqueta de ultimo momento. */
     signal: "#FF3D2E",
   },
+  /** Fondo violeta de las placas (aprobado 2026-10-23): historias, tableros y paneles de las cards. */
+  field: "radial-gradient(120% 90% at 20% 15%, #3A1B5E 0%, #261040 55%, #1E0D33 100%)",
   /** Pendiente de la diagonal de la marca (grados respecto de la horizontal). */
   slashAngle: 54,
   copy: {

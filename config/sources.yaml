@@ -48,6 +48,52 @@ sources:
     max_items_per_scan: 15
     watermark_policy: discard
 
+  # 2026-10-22: casi todo su material (fotos y videos) trae la marca "Defrentesalta": con
+  # watermark_policy discard solo sale lo que llega a thresholds.watermark (70) en editorial_scoring.yaml.
+  - name: defrentesalta
+    display_name: De Frente Salta
+    enabled: true
+    group: local
+    category: salta
+    base_url: https://defrentesalta.com.ar
+    parser: medioscms
+    listing_pages: [/historial, /categoria/7/policiales, /categoria/5/salta, /]
+    max_items_per_scan: 15
+    watermark_policy: discard
+
+  # 2026-10-22: RSS con Salta y nacionales mezcladas; videos de YouTube propios (mas de 6 min no se usan).
+  - name: saltanews
+    display_name: SaltaNews
+    enabled: true
+    group: local
+    category: salta
+    base_url: https://www.saltanews.com.ar
+    parser: saltanews
+    max_items_per_scan: 15
+
+  # 2026-10-22: Gendarmeria Nacional, solo procedimientos en Salta (Oran, Salvador Mazza, Aguas
+  # Blancas...): el parser descarta las otras provincias. No es "official": compite como policial local.
+  - name: gendarmeria
+    display_name: Gendarmería Nacional
+    enabled: true
+    group: local
+    category: policiales
+    base_url: https://www.argentina.gob.ar
+    parser: gendarmeria
+    max_items_per_scan: 10
+
+  # 2026-10-22: Autoridad Metropolitana de Transporte (taxis, remises, colectivos). Publica ~3 veces
+  # por mes; va como servicio. ig_feed_title_regex: al feed de IG solo las tarifas, el resto solo FB.
+  - name: amtsalta
+    display_name: AMT Salta
+    enabled: true
+    group: local
+    category: servicios
+    base_url: https://amtsalta.gob.ar/wp
+    parser: wordpress
+    max_items_per_scan: 5
+    ig_feed_title_regex: "tarif|boleto|pasaje"
+
   # --- SALTA OFICIALES (grupo local, umbral mas exigente) ---
   - name: gobiernosalta
     display_name: Gobierno de la Provincia de Salta

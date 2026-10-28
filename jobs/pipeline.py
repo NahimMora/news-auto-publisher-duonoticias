@@ -29,10 +29,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from zoneinfo import ZoneInfo
 
 from analytics.service import AnalyticsCollector
@@ -66,7 +67,7 @@ from storage.models import Asset, ExtractedContent, FormattedPackage, Publicatio
 from storage.settings import PipelineSettings, get_settings
 from storage.sqlite_store import PipelineStore
 from utils.media_resolver import MediaResolver, VideoUnavailable
-from utils.watermark import SOURCE_BRANDS, check_image, check_video, handle_informate_band
+from utils.watermark import SOURCE_BRANDS, WatermarkVerdict, check_image, check_video, handle_informate_band
 
 # Ventana para buscar el mismo acontecimiento entre notas recientes.
 EVENT_WINDOW_HOURS = 72
@@ -108,7 +109,10 @@ class DuoPipeline:
             max_download_mb=self.config.max_download_mb,
             max_seconds=self.config.max_reel_seconds,
             trim_long=self.config.trim_long_videos,
+            max_source_seconds=self.config.max_source_seconds,
         )
+        # Medios ya resueltos en este ciclo al armar el feed de IG (produccion los reutiliza).
+        self._media_checked: Dict[str, Dict[str, Any]] = {}
         self.rate_limits = RateLimitRegistry(
             Path(os.getenv("DUO_RATE_LIMITS_PATH") or (self.settings.data_dir / "runtime" / "meta_rate_limits.json"))
         )
@@ -179,7 +183,8 @@ class DuoPipeline:
         for key, value in evaluated.items():
             summary[key] = summary.get(key, 0) + value
         probe_before = self._ig_quota_snapshot() if publish_enabled and self.config.ig_quota_probe else None
-        plan = self._allocate(cycle_id, now=now, publish_enabled=publish_enabled)
+        self._media_checked = {}
+        plan = self._allocate(cycle_id, now=now, publish_enabled=publish_enabled, render=render)
         summary["selected"] = len(plan.selected)
         summary["allocation"] = {"usage": plan.usage, "waiting": len(plan.waiting)}
         budget_deadline = started + self.config.production_budget_minutes * 60
@@ -347,7 +352,9 @@ class DuoPipeline:
                 continue
             if role == "update":
                 totals["updates"] += 1
-            if self._image_watermark_blocks(row):
+            verdict = self._image_watermark_verdict(row)
+            if verdict is not None and verdict.blocks:
+                # Ya no se descarta aca: sin puntaje todavia. _enqueue exige thresholds.watermark.
                 totals["watermark_discarded"] += 1
         return totals
 
@@ -424,30 +431,31 @@ class DuoPipeline:
         self.store.transition(key, "duplicate", f"mismo_hecho:{match.event_key}:{match.reason}")
         return "duplicate"
 
-    def _image_watermark_blocks(self, row: Dict[str, Any]) -> bool:
-        """Marca de agua en la imagen principal (solo si la nota no tiene video: si lo tiene,
-        el recurso principal es el video y se revisa en produccion)."""
+    def _image_watermark_verdict(self, row: Dict[str, Any], *, with_video: bool = False) -> Optional[WatermarkVerdict]:
+        """Marca de agua en la imagen principal; queda en eligibility_json para decidir con el puntaje.
+
+        Sin with_video, una nota con video no se mira aca: el recurso principal es el video y se
+        revisa en produccion. Marca clara o ambigua: solo sale si llega a thresholds.watermark.
+        """
         source = str(row.get("source") or "")
         spec = self.config.source(source)
         if not spec or spec.watermark_policy != "discard":
-            return False
+            return None
         assets = self._assets(row)
-        if any(a.kind == "video" for a in assets):
-            return False
+        if not with_video and any(a.kind == "video" for a in assets):
+            return None
         image = next((a for a in assets if a.kind == "image" and (a.path or a.remote_url)), None)
         if image is None:
-            return False
+            return None
         local = image.path or self._download_image(image.remote_url, str(row["content_key"]))
         if not local:
-            return False
+            # Sin poder mirar la foto no se asume limpia: se trata como dudosa (exige thresholds.watermark).
+            verdict = WatermarkVerdict("ambiguous", reason="marca_no_verificable:imagen_no_descargada")
+            self._update_eligibility(row, {"watermark": verdict.status, "watermark_score": 0.0, "brand": ""})
+            return verdict
         verdict = check_image(local, WATERMARK_BRANDS.get(source, []))
         self._update_eligibility(row, {"watermark": verdict.status, "watermark_score": verdict.score, "brand": verdict.brand})
-        if verdict.blocks:
-            # Marca clara: descarte. Caso ambiguo: queda en revision, nunca se publica solo.
-            status = "review" if verdict.status == "ambiguous" else "discarded"
-            self.store.transition(str(row["content_key"]), status, f"{verdict.reason}:score={verdict.score}")
-            return True
-        return False
+        return verdict
 
     # -- 7-8) relevancia y cola --------------------------------------------------
 
@@ -505,6 +513,11 @@ class DuoPipeline:
             self.store.transition(key, "discarded", f"bajo_umbral:{score:.0f}<{threshold:.0f}:{payload.get('motivo') or ''}")
             totals["below_threshold"] += 1
             return totals
+        marked = self._load_json(row.get("eligibility_json"))
+        if marked.get("watermark") in {"watermark", "ambiguous"} and not self.config.watermark_allowed(score):
+            self.store.transition(key, "discarded", f"marca_de_agua:{marked.get('brand') or ''}:score={score:.0f}<{self.config.thresholds.get('watermark', 70):.0f}")
+            totals["below_threshold"] += 1
+            return totals
         event = self.store.get_event(str(row.get("event_key") or "")) if row.get("event_key") else None
         entered = str((event or {}).get("first_eligible_at") or row.get("queue_entered_at") or now.replace(microsecond=0).isoformat())
         expires = (datetime.fromisoformat(entered) + timedelta(hours=self.config.pending_ttl_hours)).isoformat()
@@ -516,7 +529,7 @@ class DuoPipeline:
 
     # -- 9) asignacion -------------------------------------------------------------
 
-    def _allocate(self, cycle_id: str, *, now: datetime, publish_enabled: bool):
+    def _allocate(self, cycle_id: str, *, now: datetime, publish_enabled: bool, render: bool = True):
         rows = self.store.queue_rows_for_allocation(now.replace(microsecond=0).isoformat())
         used: Dict[str, int] = {}
         blocked_events: List[str] = []
@@ -546,44 +559,97 @@ class DuoPipeline:
         for item in plan.selected:
             self.store.transition(item["content_key"], "selected", plan.reasons.get(item["content_key"], ""), cycle_id=cycle_id, assigned_slot=item["slot"])
         if self.config.ig_feed_per_day > 0:
-            self._assign_ig_feed(plan, {c.content_key: c.score for c in candidates}, now=now, publish_enabled=publish_enabled)
+            self._assign_ig_feed(plan, {c.content_key: c.score for c in candidates}, now=now, publish_enabled=publish_enabled, render=render)
         return plan
 
-    def _assign_ig_feed(self, plan, scores: Dict[str, float], *, now: datetime, publish_enabled: bool) -> None:
+    def _assign_ig_feed(self, plan, scores: Dict[str, float], *, now: datetime, publish_enabled: bool, render: bool = True) -> None:
         """Feed de IG separado (2026-10-21): solo las mejores del ciclo van al feed de Instagram.
 
         El volumen alto (unas 85 publicaciones por dia) subio el alcance pero llevo las bajas de
         seguidores de ~15 a ~90 por dia. Las demas notas salen solo en Facebook.
+
+        La reserva local (2026-10-22, quotas.ig_feed.local_extra) se llena despues del pool general
+        con las locales que no entraron: las nacionales conservan su volumen en el feed.
+
+        El bonus de video exige un video ya verificado (descargado y dentro de los limites): un
+        YouTube que no baja o un clip demasiado corto saldria como imagen y no debe adelantarse.
         """
-        slots = self._ig_feed_slots(now, publish_enabled)
+        slots, local_slots = self._ig_feed_slots(now, publish_enabled)
         ranked = []
         for item in plan.selected:
             row = self.store.find_content(item["content_key"]) or {}
-            has_video = any(a.kind == "video" for a in self._assets(row)) if row else False
+            if row and self._is_local(row) and scores.get(item["content_key"], 0.0) < self.config.ig_feed_local_min_score:
+                self._update_eligibility(row, {"ig_feed": False})  # local floja: solo Facebook
+                continue
+            if row and not self._ig_title_allowed(row):
+                self._update_eligibility(row, {"ig_feed": False})  # p. ej. AMT: a IG solo las tarifas
+                continue
+            has_video = bool(row) and self._has_usable_video(row, render=render)
             ranked.append((scores.get(item["content_key"], 0.0) + (self.config.ig_feed_video_bonus if has_video else 0.0), row))
-        ranked.sort(key=lambda pair: -pair[0])
-        for index, (_, row) in enumerate(ranked):
+        ranked.sort(key=lambda entry: -entry[0])
+        rest = [(value, row) for value, row in ranked[slots:] if row]
+        locals_left = [(value, row) for value, row in rest if self._is_local(row)]
+        locals_left.sort(key=lambda entry: -(entry[0] + self.config.ig_feed_local_tema_bonus.get(self._tema(entry[1]), 0.0)))
+        reserved = {row["content_key"] for _, row in locals_left[:local_slots]}
+        for _, row in ranked[:slots]:
             if row:
-                self._update_eligibility(row, {"ig_feed": index < slots})
+                self._update_eligibility(row, {"ig_feed": True, "ig_feed_pool": "general"})
+        for _, row in rest:
+            if row["content_key"] in reserved:
+                self._update_eligibility(row, {"ig_feed": True, "ig_feed_pool": "local"})
+            else:
+                self._update_eligibility(row, {"ig_feed": False})
 
-    def _ig_feed_slots(self, now: datetime, publish_enabled: bool) -> int:
+    def _has_usable_video(self, row: Dict[str, Any], *, render: bool) -> bool:
+        """Resuelve el video antes de produccion; queda en media_json y produccion no lo vuelve a bajar."""
+        if not any(a.kind == "video" for a in self._assets(row)):
+            return False
+        try:
+            media = self._prepare_media(row, render=render)
+            self._media_checked[str(row["content_key"])] = media
+        except Exception as exc:
+            self.logger.warning("No se pudo verificar el video de %s: %s", row.get("content_key"), exc)
+            return False
+        return bool(media.get("video"))
+
+    def _ig_title_allowed(self, row: Dict[str, Any]) -> bool:
+        spec = self.config.source(row.get("source"))
+        pattern = str((spec.raw if spec else {}).get("ig_feed_title_regex") or "")
+        return not pattern or re.search(pattern, str(row.get("title") or ""), re.I) is not None
+
+    def _is_local(self, row: Dict[str, Any]) -> bool:
+        return self.config.group_of(row.get("source"), row.get("source_type")) == "local"
+
+    def _tema(self, row: Dict[str, Any]) -> str:
+        return str(self._load_json(row.get("relevance_json")).get("tema") or "").lower()
+
+    def _ig_feed_slots(self, now: datetime, publish_enabled: bool) -> Tuple[int, int]:
+        """Lugares del feed de IG en este ciclo: (pool general, reserva local)."""
         local = now.astimezone(self.zone)
         slots = self.config.news_cap_for_hour(local.hour)
+        local_slots = 0 if local.hour in self.config.ig_news_night_hours else self.config.ig_feed_local_per_cycle
         midnight = local.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc).isoformat()
         with self.store.connection() as conn:
             row = conn.execute(
-                "SELECT COUNT(DISTINCT content_key) FROM publications WHERE platform = 'instagram' AND status = 'published' AND COALESCE(published_at, updated_at) >= ?",
+                "SELECT COUNT(DISTINCT p.content_key) total, "
+                "COUNT(DISTINCT CASE WHEN json_extract(c.eligibility_json, '$.ig_feed_pool') = 'local' THEN p.content_key END) reserved "
+                "FROM publications p LEFT JOIN content_items c ON c.content_key = p.content_key "
+                "WHERE p.platform = 'instagram' AND p.status = 'published' AND COALESCE(p.published_at, p.updated_at) >= ?",
                 (midnight,),
             ).fetchone()
-        slots = min(slots, max(0, self.config.ig_feed_per_day - int(row[0] or 0)))
+        reserved = int(row[1] or 0)
+        slots = min(slots, max(0, self.config.ig_feed_per_day - (int(row[0] or 0) - reserved)))
+        local_slots = min(local_slots, max(0, self.config.ig_feed_local_per_day - reserved))
         if publish_enabled and self.settings.enable_instagram and not self.config.ig_quota_probe:
             try:
                 remaining = self.publisher.get_ig_publish_limit().get("remaining")
                 if isinstance(remaining, int):
-                    slots = min(slots, max(0, remaining - self.config.ig_reserve_for_formats))
+                    available = max(0, remaining - self.config.ig_reserve_for_formats)
+                    slots = min(slots, available)
+                    local_slots = min(local_slots, available - slots)
             except Exception as exc:
                 self.logger.warning("No se pudo leer el limite de publicacion de Instagram: %s", exc)
-        return slots
+        return slots, local_slots
 
     def _capacity_left(self, now: datetime, publish_enabled: bool) -> Optional[int]:
         caps: List[int] = []
@@ -650,7 +716,7 @@ class DuoPipeline:
         row = self.store.find_content(content_key) or {}
         outcome: Dict[str, Any] = {"content_key": content_key, "title": row.get("title"), "source": row.get("source"), "slot": row.get("assigned_slot")}
         try:
-            media = self._prepare_media(row, render=render)
+            media = self._media_checked.pop(content_key, None) or self._prepare_media(row, render=render)
             if media.get("discard"):
                 self.store.transition(content_key, "review" if media.get("review") else "discarded", media["discard"])
                 self._promote_alternative(row)
@@ -737,10 +803,10 @@ class DuoPipeline:
                 except RuntimeError as exc:
                     failures.append(str(exc))
                     continue
-            elif spec and spec.watermark_policy == "discard":
+            elif spec and spec.watermark_policy == "discard" and not self.config.watermark_allowed(row.get("relevance_score")):
                 verdict = check_video(path, WATERMARK_BRANDS.get(source, []))
                 if verdict.blocks:
-                    return {"discard": f"{verdict.reason}:video:score={verdict.score}", "review": verdict.status == "ambiguous"}
+                    return {"discard": f"{verdict.reason}:video:score={verdict.score}:relevancia<{self.config.thresholds.get('watermark', 70):.0f}"}
             media = {"video": {"path": path, "duration_seconds": resolved.duration_seconds, "kind": resolved.kind,
                                "width": resolved.width, "height": resolved.height, "has_audio": resolved.has_audio,
                                "trimmed": resolved.trimmed},
@@ -750,8 +816,10 @@ class DuoPipeline:
         if requires_video and not self._image_allowed(row):
             return {"discard": "video_inutilizable:" + (",".join(failures) or "sin_video")}
         media = {"video": None, "failures": failures, "fallback": "imagen" if failures else ""}
-        if failures and spec and spec.watermark_policy == "discard" and self._image_watermark_blocks(row):
-            return {"discard": "marca_de_agua_en_imagen_alternativa"}
+        if failures and spec and spec.watermark_policy == "discard" and not self.config.watermark_allowed(row.get("relevance_score")):
+            verdict = self._image_watermark_verdict(row, with_video=True)
+            if verdict is not None and verdict.blocks:
+                return {"discard": f"marca_de_agua_en_imagen_alternativa:{verdict.reason}"}
         self._save_media(key, media)
         return media
 

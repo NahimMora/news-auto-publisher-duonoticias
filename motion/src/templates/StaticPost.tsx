@@ -183,7 +183,7 @@ const SplitPost: React.FC<{ content: Content; layout: Layout; accent: string; to
   const photoH = layout.height - panelH + Math.round(60 * u);
   const cutH = Math.round(60 * u);
   return (
-    <AbsoluteFill style={{ background: brand.colors.primary }}>
+    <AbsoluteFill style={{ background: brand.colors.primaryDeep }}>
       <div style={{ position: "absolute", left: 0, right: 0, top: 0, height: photoH, overflow: "hidden" }}>
         <PhotoLayer photo={photo} />
         <AbsoluteFill style={{ background: "linear-gradient(to bottom, rgba(12,8,18,0.5) 0%, rgba(12,8,18,0) 26%)" }} />
@@ -196,7 +196,7 @@ const SplitPost: React.FC<{ content: Content; layout: Layout; accent: string; to
           right: 0,
           top: layout.height - panelH - cutH,
           height: panelH + cutH,
-          background: brand.colors.primary,
+          background: brand.field,
           clipPath: `polygon(0px ${cutH}px, ${layout.width * 0.62}px ${cutH}px, ${layout.width * 0.62 + slashRun(cutH)}px 0px, ${layout.width}px 0px, ${layout.width}px ${panelH + cutH}px, 0px ${panelH + cutH}px)`,
         }}
       />
@@ -224,14 +224,14 @@ const SplitPost: React.FC<{ content: Content; layout: Layout; accent: string; to
 const TypePost: React.FC<{ content: Content; layout: Layout; accent: string; total: number }> = ({ content, layout, total }) => {
   const u = layout.u;
   const urgent = content.breaking;
-  const field = urgent ? brand.colors.accent : brand.colors.primary;
+  const field = urgent ? brand.colors.accent : brand.field;
   const ink = urgent ? brand.colors.ink : brand.colors.white;
   const corner = urgent ? brand.colors.primary : brand.colors.accent;
   const block = useHeadline(content, layout, { ...textRoles.breakingHeadline, lineHeight: 0.98 }, 1, 0.5, 1.12);
   return (
     <AbsoluteFill style={{ background: field }}>
-      <AbsoluteFill style={{ background: corner, clipPath: slashCorner(1, layout.width, layout.height, "top-left", 0.22) }} />
-      <AbsoluteFill style={{ background: corner, clipPath: slashCorner(1, layout.width, layout.height, "bottom-right", 0.26) }} />
+      <AbsoluteFill style={{ background: corner, clipPath: slashCorner(1, layout.width, layout.height, "top-left", 0.1) }} />
+      <AbsoluteFill style={{ background: corner, clipPath: slashCorner(1, layout.width, layout.height, "bottom-right", 0.14) }} />
       <Grain opacity={0.06} />
       <div style={{ position: "absolute", left: layout.margin, top: layout.format === "reel" ? layout.safeTop : Math.round(58 * u) }}>
         {urgent ? (
@@ -323,7 +323,7 @@ const TextSlide: React.FC<{ content: Content; layout: Layout; text: string; inde
   }, [text, layout, u, textWidth, title.height]);
   const last = index >= total - 1;
   return (
-    <AbsoluteFill style={{ background: brand.colors.primary }}>
+    <AbsoluteFill style={{ background: brand.field }}>
       <AbsoluteFill style={{ background: brand.colors.accent, clipPath: slashCorner(1, layout.width, layout.height, "top-left", 0.16) }} />
       <AbsoluteFill style={{ background: brand.colors.accent, clipPath: slashCorner(1, layout.width, layout.height, "bottom-right", 0.2) }} />
       <Grain opacity={0.06} />

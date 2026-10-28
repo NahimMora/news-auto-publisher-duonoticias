@@ -136,7 +136,7 @@ class FormatsStore:
 
     def last_run(self, kind: str) -> Optional[Dict[str, Any]]:
         with self.connection() as conn:
-            row = conn.execute("SELECT * FROM format_runs WHERE kind = ? AND status = 'done' ORDER BY updated_at DESC LIMIT 1", (kind,)).fetchone()
+            row = conn.execute("SELECT * FROM format_runs WHERE kind = ? AND status = 'done' ORDER BY updated_at DESC, slot DESC LIMIT 1", (kind,)).fetchone()
         return dict(row) if row else None
 
     # -- publicaciones ----------------------------------------------------------

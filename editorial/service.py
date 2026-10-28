@@ -23,7 +23,7 @@ from jobs.events import mentions_salta
 from storage.editorial_config import EditorialConfig, load_editorial_config
 from storage.models import EditorialPackage
 from storage.settings import PipelineSettings, get_settings
-from utils.llm_client import LLMError, LLMUsage, generate_json_with_usage
+from utils.llm_client import LLMError, LLMUsage, generate_json_with_usage, is_content_block, is_invalid_json
 
 LOGGER = logging.getLogger("duo.editorial")
 UsageSink = Callable[..., None]
@@ -110,6 +110,12 @@ class EditorialAI:
             except (LLMError, ValueError, RuntimeError) as exc:
                 self._record(usage_sink, None, ok=False, error=str(exc), cycle_id=cycle_id, row=row)
                 LOGGER.warning("caption %s: %s", row.get("content_key"), exc)
+                if is_content_block(exc):
+                    # Bloqueo de Gemini (tambien en el respaldo): la nota es verificada, sale con el texto de la fuente.
+                    return self._fallback(row, relevance, cache_key, prompt, reason="fallback_bloqueo_ia:" + str(exc)[:80])
+                if attempt == 0 and is_invalid_json(exc):
+                    # Gemini a veces responde sin JSON (23-26/10); la nota salia una hora tarde. Se pide de nuevo ya.
+                    continue
                 # Falla transitoria (503, cuota, red): la pieza vuelve a la cola y se reintenta
                 # en el proximo ciclo; no se publica un texto de respaldo pobre.
                 raise RuntimeError(f"caption_ia_no_disponible:{str(exc)[:120]}") from exc

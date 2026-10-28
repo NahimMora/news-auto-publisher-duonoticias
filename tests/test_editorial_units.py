@@ -78,7 +78,11 @@ class AllocationTests(unittest.TestCase):
         pool = [self.cand(f"l{i}", "local", 90 - i, source=f"s{i % 3}") for i in range(9)]
         pool += [self.cand(f"n{i}", "national", 95 - i, source="tn") for i in range(4)]
         pool += [self.cand(f"p{i}", "paparazzi", 70 - i, source="paparazzi") for i in range(4)]
-        plan = allocate(pool, self.cfg)
+        from dataclasses import replace
+
+        # Logica del asignador con los cupos de 2026-10-18 (el yaml de produccion puede cambiar).
+        cfg = replace(self.cfg, max_per_cycle=10, max_per_source_per_cycle=3, group_quotas={**self.cfg.group_quotas, "local": 6, "national": 2, "paparazzi": 2})
+        plan = allocate(pool, cfg)
         slots = [item["slot"] for item in plan.selected]
         # Sin cupos libres (decision 2026-10-18): techo 10 = 6 locales + 2 nacionales + 2 Paparazzi.
         self.assertEqual(self.cfg.free_slots, 0)
@@ -180,6 +184,28 @@ class CaptionTests(unittest.TestCase):
         self.assertEqual(captions.build_hashtags(group="national", category="policiales", salta_related=False), ["#DuoNoticias", "#Argentina", "#Policiales"])
         self.assertIn("#Salta", captions.build_hashtags(group="local", category="clima", salta_related=True))
         self.assertNotIn("#Salta", captions.build_hashtags(group="paparazzi", category="espectaculos", salta_related=False))
+
+    def test_invalid_json_from_gemini_is_retried_in_the_same_cycle(self) -> None:
+        # 23-26/10: Gemini respondio sin JSON y la nota salia recien en el ciclo siguiente.
+        from editorial.service import EditorialAI
+        from utils.llm_client import INVALID_JSON_MESSAGE, LLMError, LLMUsage
+
+        calls = []
+
+        def call(system: str, prompt: str):
+            calls.append(prompt)
+            if len(calls) == 1:
+                raise LLMError(INVALID_JSON_MESSAGE)
+            return ({"titulo": "Corte de agua en zona sur", "caption": "Vecinos de la zona contaron lo que paso.\n\nLas autoridades siguen el caso.",
+                     "contexto_suficiente": True, "visual": {"categoria": "sociedad"}}, LLMUsage(model="fake"))
+
+        get_settings.cache_clear()
+        service = EditorialAI(get_settings(), call=call)
+        row = {"content_key": "k1", "title": "Corte de agua en zona sur", "summary": "Vecinos de la zona contaron lo que paso.",
+               "body_text": "Las autoridades siguen el caso.", "source": "tn"}
+        package = service.generate(row, relevance={"group": "local"})
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(package.caption)
 
     def test_final_caption_is_under_2000_chars(self) -> None:
         final = captions.assemble("Parrafo largo. " * 400, ["#DuoNoticias", "#Salta"])

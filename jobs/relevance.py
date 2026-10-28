@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from storage.editorial_config import EditorialConfig
-from utils.llm_client import LLMConfig, LLMError, LLMUsage, generate_json_with_usage
+from utils.llm_client import LLMConfig, LLMError, LLMUsage, generate_json_with_usage, is_content_block
 
 LOGGER = logging.getLogger("duo.relevance")
 
@@ -234,6 +234,10 @@ class RelevanceEvaluator:
         except (LLMError, ValueError, RuntimeError) as exc:
             LOGGER.warning("relevancia: lote de %s notas fallo: %s", len(batch), exc)
             self._record(None, items=len(batch), ok=False, error=str(exc), cycle_id=cycle_id, keys=keys)
+            if is_content_block(exc) and len(batch) > 1:
+                # Una nota bloqueada no frena al resto: se parte el lote hasta aislarla.
+                half = len(batch) // 2
+                return {**self._evaluate_batch(batch[:half], cycle_id=cycle_id), **self._evaluate_batch(batch[half:], cycle_id=cycle_id)}
             return {}
         self._record(usage, items=len(batch), ok=True, cycle_id=cycle_id, keys=keys)
         by_id = {str(item.get("id") or ""): expand_item(item) for item in payload.get("items") or [] if isinstance(item, dict)}

@@ -75,6 +75,36 @@ def is_overload_error(exc: Exception) -> bool:
     return "HTTP 503" in text or "UNAVAILABLE" in text or "overloaded" in text.lower() or "high demand" in text.lower()
 
 
+# Filtros de seguridad configurables de Gemini, apagados (2026-10-22): las notas son periodisticas y
+# verificadas (policiales, abusos, violencia). PROHIBITED_CONTENT no es configurable del lado de Google:
+# ese bloqueo se reintenta con el modelo de respaldo y, si persiste, cada llamador usa su alternativa.
+GEMINI_SAFETY_OFF = [
+    {"category": category, "threshold": "OFF"}
+    for category in (
+        "HARM_CATEGORY_HARASSMENT",
+        "HARM_CATEGORY_HATE_SPEECH",
+        "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+        "HARM_CATEGORY_DANGEROUS_CONTENT",
+        "HARM_CATEGORY_CIVIC_INTEGRITY",
+    )
+]
+_BLOCK_REASONS = ("SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII", "OTHER")
+
+
+def is_content_block(exc: Exception) -> bool:
+    """Gemini rechazo el contenido (no es una falla de red ni de cuota)."""
+    text = str(exc)
+    return "Gemini sin texto" in text and any(f"Reason={reason}" in text for reason in _BLOCK_REASONS)
+
+
+INVALID_JSON_MESSAGE = "Respuesta IA invalida: sin objeto JSON"
+
+
+def is_invalid_json(exc: Exception) -> bool:
+    """Gemini respondio, pero sin un objeto JSON legible."""
+    return INVALID_JSON_MESSAGE in str(exc)
+
+
 def llm_config_from_env() -> LLMConfig:
     provider = (os.getenv("LLM_PROVIDER") or "gemini").strip().lower()
     if provider == "openai":
@@ -137,8 +167,8 @@ def generate_text_with_usage(
         try:
             text, usage = _gemini(cfg, system_prompt, user_prompt, temperature, max_output_tokens, json_output, timeout, response_schema)
         except LLMError as exc:
-            # Modelo principal saturado (503, ya reintentado con espera): una vez con el respaldo.
-            if not (cfg.fallback_model and cfg.fallback_model != cfg.model and is_overload_error(exc)):
+            # Modelo principal saturado (503, ya reintentado con espera) o contenido bloqueado: una vez con el respaldo.
+            if not (cfg.fallback_model and cfg.fallback_model != cfg.model and (is_overload_error(exc) or is_content_block(exc))):
                 raise
             fallback = replace(cfg, model=cfg.fallback_model, fallback_model="")
             text, usage = _gemini(fallback, system_prompt, user_prompt, temperature, max_output_tokens, json_output, timeout, response_schema)
@@ -155,7 +185,7 @@ def generate_json_with_usage(system_prompt: str, user_prompt: str, **kwargs: Any
     text, usage = generate_text_with_usage(system_prompt, user_prompt, json_output=True, **kwargs)
     parsed = parse_json_object(text)
     if parsed is None:
-        raise LLMError("Respuesta IA invalida: sin objeto JSON")
+        raise LLMError(INVALID_JSON_MESSAGE)
     return parsed, usage
 
 
@@ -223,6 +253,7 @@ def _gemini(
     payload: Dict[str, Any] = {
         "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
         "generationConfig": generation_config,
+        "safetySettings": GEMINI_SAFETY_OFF,
     }
     if system_prompt:
         payload["systemInstruction"] = {"parts": [{"text": system_prompt}]}

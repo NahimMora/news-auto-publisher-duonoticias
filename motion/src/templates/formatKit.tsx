@@ -67,7 +67,7 @@ export const BrandFrame: React.FC<{ corners?: number; children?: React.ReactNode
         style={{
           background:
             tone === "violet"
-              ? `radial-gradient(120% 80% at 30% 20%, ${brand.colors.primary} 0%, ${brand.colors.primaryDeep} 75%)`
+              ? brand.field
               : `radial-gradient(110% 70% at 50% 0%, #2a1247 0%, ${brand.colors.primaryDeep} 70%)`,
         }}
       />

@@ -133,7 +133,7 @@ def _add_legacy_aliases(subparsers: argparse._SubParsersAction[argparse.Argument
     report.add_argument("--no-write", action="store_true")
 
     formats = subparsers.add_parser("formats", help="Formatos (historias, resumen, servicio, top semanal...): vista previa o publicacion ahora")
-    formats.add_argument("--step", action="append", required=True, help="weather_story, weather_alert_post, digest, services, holidays, dollar, recap, weekly, comments, report")
+    formats.add_argument("--step", action="append", required=True, help="weather_story, weather_alert_post, digest, services, quakes, holidays, dollar, recap, weekly, comments, report")
     formats.add_argument("--live", action="store_true", help="Publicar de verdad (solo FERNANDO); sin esto solo renderiza en data/formats/preview")
     ops = subparsers.add_parser("ops-report", help="Reporte de operaciones por correo")
     ops.add_argument("--send", action="store_true", help="Generar y enviar ahora")

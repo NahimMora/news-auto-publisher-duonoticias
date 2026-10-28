@@ -46,6 +46,9 @@ def process_image(url_or_path, filename, folder, target_width=700, max_width=108
                     break
                 except Exception as exc:
                     last_exc = exc
+                    if getattr(getattr(exc, "response", None), "status_code", None) == 403:
+                        # Cloudflare de De Frente Salta: rechaza estos headers de navegador y acepta un UA simple.
+                        headers = {"User-Agent": "Mozilla/5.0"}
                     if attempt < 2:
                         time.sleep(1.5 * (attempt + 1))
                         continue
